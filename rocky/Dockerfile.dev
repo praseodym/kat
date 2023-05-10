@@ -1,0 +1,25 @@
+FROM python:3.8
+
+ARG USER_UID=1000
+ARG USER_GID=1000
+
+ENTRYPOINT ["/app/rocky/entrypoint.sh"]
+
+RUN groupadd --gid $USER_GID rocky
+RUN adduser --disabled-password --gecos '' --uid $USER_UID --gid $USER_GID rocky
+
+WORKDIR /app/rocky
+
+RUN --mount=type=cache,target=/var/cache/apt \
+  apt-get update \
+  && apt-get -y upgrade \
+  && apt-get install -y --no-install-recommends gettext \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY rocky/requirements*.txt .
+RUN ls -la
+RUN --mount=type=cache,target=/root/.cache \
+    pip install --upgrade pip \
+    && pip install -r requirements-dev.txt
+
+USER rocky
