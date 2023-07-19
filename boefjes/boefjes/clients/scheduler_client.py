@@ -1,17 +1,14 @@
+import datetime
 import logging
+import uuid
+from enum import Enum
 from typing import List, Optional, Union
 
 import requests
-import uuid
-
-from enum import Enum
-import datetime
-
+from pydantic import BaseModel, parse_obj_as
 from requests.adapters import HTTPAdapter, Retry
 
 from boefjes.job_models import BoefjeMeta, NormalizerMeta
-from pydantic import BaseModel, parse_obj_as
-
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +61,12 @@ class SchedulerClientInterface:
     def patch_task(self, task_id: str, status: TaskStatus) -> None:
         raise NotImplementedError()
 
+    def get_task(self, task_id: str) -> Task:
+        raise NotImplementedError()
+
+    def push_item(self, queue_id: str, p_item: QueuePrioritizedItem) -> None:
+        raise NotImplementedError()
+
 
 class LogRetry(Retry):
     """Add a log when retrying a request"""
@@ -95,13 +98,21 @@ class SchedulerAPIClient(SchedulerClientInterface):
         return parse_obj_as(List[Queue], response.json())
 
     def pop_item(self, queue: str) -> Optional[QueuePrioritizedItem]:
-        response = self._session.get(f"{self.base_url}/queues/{queue}/pop")
+        response = self._session.post(f"{self.base_url}/queues/{queue}/pop")
         self._verify_response(response)
 
         return parse_obj_as(Optional[QueuePrioritizedItem], response.json())
+
+    def push_item(self, queue_id: str, p_item: QueuePrioritizedItem) -> None:
+        response = self._session.post(f"{self.base_url}/queues/{queue_id}/push", data=p_item.json())
+        self._verify_response(response)
 
     def patch_task(self, task_id: str, status: TaskStatus) -> None:
         response = self._session.patch(f"{self.base_url}/tasks/{task_id}", json={"status": status.value})
         self._verify_response(response)
 
-        logger.info(f"Set task status to {status} in the scheduler for task[{task_id}]")
+    def get_task(self, task_id: str) -> Task:
+        response = self._session.get(f"{self.base_url}/tasks/{task_id}")
+        self._verify_response(response)
+
+        return parse_obj_as(Task, response.json())

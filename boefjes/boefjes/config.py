@@ -1,9 +1,8 @@
 from enum import Enum
-
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseSettings, AnyHttpUrl, PostgresDsn
+from pydantic import AnyHttpUrl, BaseSettings, PostgresDsn
 
 
 class RuntimeConfiguration(Enum):
@@ -17,6 +16,7 @@ class Settings(BaseSettings):
     # Worker configuration
     pool_size: int = 2
     poll_interval: float = 1.0
+    worker_heartbeat: float = 1.0
 
     # Queue configuration
     queue_name_boefjes: str = "boefjes"
@@ -39,10 +39,9 @@ class Settings(BaseSettings):
     bytes_username: str = "test"
     bytes_password: str = "secret"
 
-    remote_ns: str = "8.8.8.8"
+    span_export_grpc_endpoint: Optional[str] = None
 
-    lxd_endpoint: str = ""
-    lxd_password: Optional[str] = None
+    remote_ns: str = "8.8.8.8"
 
 
 settings = Settings()

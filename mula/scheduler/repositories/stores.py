@@ -18,15 +18,13 @@ class TaskStorer(abc.ABC):
     @abc.abstractmethod
     def get_tasks(
         self,
-        scheduler_id: Optional[str],
-        type: Optional[str],
-        status: Optional[str],
-        min_created_at: Optional[datetime.datetime],
-        max_created_at: Optional[datetime.datetime],
-        filters: Optional[List[models.Filter]],
-        offset: int = 0,
-        limit: int = 100,
-    ) -> Tuple[List[models.Task], int]:
+        scheduler_id: Optional[str] = None,
+        task_type: Optional[str] = None,
+        status: Optional[str] = None,
+        min_created_at: Optional[datetime.datetime] = None,
+        max_created_at: Optional[datetime.datetime] = None,
+        filters: Optional[List[models.Filter]] = None,
+    ):
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -49,6 +47,24 @@ class TaskStorer(abc.ABC):
     def update_task(self, task: models.Task) -> Optional[models.Task]:
         raise NotImplementedError
 
+    def cancel_tasks(self, scheduler_id: str, task_ids: List[str]) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def api_list_tasks(
+        self,
+        scheduler_id: Optional[str],
+        task_type: Optional[str],
+        status: Optional[str],
+        min_created_at: Optional[datetime.datetime],
+        max_created_at: Optional[datetime.datetime],
+        input_ooi: Optional[str],
+        plugin_id: Optional[str],
+        offset: int = 0,
+        limit: int = 100,
+    ) -> Tuple[List[models.Task], int]:
+        raise NotImplementedError
+
 
 class PriorityQueueStorer(abc.ABC):
     def __init__(self) -> None:
@@ -67,6 +83,10 @@ class PriorityQueueStorer(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def clear(self, scheduler_id: str) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def peek(self, scheduler_id: str, index: int) -> Optional[models.PrioritizedItem]:
         raise NotImplementedError
 
@@ -80,6 +100,14 @@ class PriorityQueueStorer(abc.ABC):
 
     @abc.abstractmethod
     def update(self, scheduler_id: str, item: models.PrioritizedItem) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def get_items(
+        self,
+        scheduler_id: str,
+        filters: Optional[List[models.Filter]] = None,
+    ) -> Tuple[List[models.PrioritizedItem], int]:
         raise NotImplementedError
 
     @abc.abstractmethod

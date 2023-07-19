@@ -20,7 +20,7 @@
               {% endblocktranslate %}
                         </p>
                     </div>
-                    {% if perms.tools.can_scan_organization %}
+                    {% if perms.tools.can_view_katalogus_settings %}
                         <div class="horizontal-view toolbar">
                             <a class="button ghost"
                                href="{% url 'katalogus_settings' organization.code %}">{% translate "KAT-alogus Settings" %}</a>
@@ -50,7 +50,7 @@
                             </thead>
                             <tbody>
                                 {% for plugin in object_list %}
-                                    <tr>
+                                    <tr id="plugin_{{ plugin.id|slugify }}">
                                         <td scope="row">{{ plugin.name }}</td>
                                         <td>{{ plugin.description }}</td>
                                         <td>

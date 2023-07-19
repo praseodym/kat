@@ -1,20 +1,31 @@
 import logging
-import uuid
+from functools import cached_property
+from typing import Iterable, Set
 
 import tagulous.models
 from django.conf import settings
+from django.contrib.auth.models import Group, Permission
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models.signals import pre_save
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
+from katalogus.client import KATalogusClientV1, get_katalogus
+from katalogus.exceptions import (
+    KATalogusDownException,
+    KATalogusException,
+    KATalogusUnhealthyException,
+)
 from requests import RequestException
 
-from katalogus.client import get_katalogus, KATalogusClientV1
 from octopoes.connector.octopoes import OctopoesAPIConnector
-from rocky.exceptions import RockyError
-from tools.add_ooi_information import get_info, SEPARATOR
+from rocky.exceptions import (
+    OctopoesDownException,
+    OctopoesException,
+    OctopoesUnhealthyException,
+)
+from tools.add_ooi_information import SEPARATOR, get_info
 from tools.enums import SCAN_LEVEL
 from tools.fields import LowerCaseSlugField
 
@@ -25,6 +36,34 @@ GROUP_CLIENT = "clients"
 logger = logging.getLogger(__name__)
 
 ORGANIZATION_CODE_LENGTH = 32
+DENY_ORGANIZATION_CODES = [
+    "admin",
+    "api",
+    "i18n",
+    "health",
+    "privacy-statement",
+    "account",
+    "crisis-room",
+    "onboarding",
+    "indemnifications",
+    "findings",
+    "objects",
+    "organizations",
+    "edit",
+    "members",
+    "settings",
+    "scans",
+    "upload",
+    "tasks",
+    "bytes",
+    "kat-alogus",
+    "boefjes",
+    "mula",
+    "keiko",
+    "octopoes",
+    "rocky",
+    "fmea",
+]
 
 
 class OrganizationTag(tagulous.models.TagTreeModel):
@@ -65,6 +104,11 @@ class Organization(models.Model):
             ("can_scan_organization", "Can scan organization"),
             ("can_enable_disable_boefje", "Can enable or disable boefje"),
             ("can_set_clearance_level", "Can set clearance level"),
+            ("can_delete_oois", "Can delete oois"),
+            ("can_mute_findings", "Can mute findings"),
+            ("can_view_katalogus_settings", "Can view KAT-alogus settings"),
+            ("can_set_katalogus_settings", "Can set KAT-alogus settings"),
+            ("can_recalculate_bits", "Can recalculate bits"),
         )
 
     def get_absolute_url(self):
@@ -77,7 +121,7 @@ class Organization(models.Model):
         try:
             octopoes_client.delete_node()
         except Exception as e:
-            raise RockyError(f"Octopoes returned error deleting organization: {e}") from e
+            raise OctopoesException("Failed deleting organization in Octopoes") from e
 
         try:
             katalogus_client.delete_organization()
@@ -85,17 +129,26 @@ class Organization(models.Model):
             try:
                 octopoes_client.create_node()
             except Exception as e:
-                raise RockyError(
-                    f"Could not recreate the organization in Octopoes after failing to delete the "
-                    f"organization in the Katalogus: {e}"
-                ) from e
+                raise OctopoesException("Failed creating organization in Octopoes") from e
 
-            raise RockyError(f"Katalogus returned error deleting organization: {e}") from e
+            raise KATalogusException("Failed deleting organization in the Katalogus") from e
 
         super().delete(*args, **kwargs)
 
+    def clean(self):
+        if self.code in DENY_ORGANIZATION_CODES:
+            raise ValidationError(
+                {
+                    "code": _(
+                        "This organization code is reserved by OpenKAT and cannot be used. "
+                        "Choose another organization code."
+                    )
+                }
+            )
+
     @classmethod
     def pre_create(cls, sender, instance, *args, **kwargs):
+        instance.clean()
         katalogus_client = cls._get_healthy_katalogus(instance.code)
         octopoes_client = cls._get_healthy_octopoes(instance.code)
 
@@ -103,7 +156,7 @@ class Organization(models.Model):
             if not katalogus_client.organization_exists():
                 katalogus_client.create_organization(instance.name)
         except Exception as e:
-            raise RockyError(f"Katalogus returned error creating organization: {e}") from e
+            raise KATalogusException("Failed creating organization in the Katalogus") from e
 
         try:
             octopoes_client.create_node()
@@ -111,12 +164,9 @@ class Organization(models.Model):
             try:
                 katalogus_client.delete_organization()
             except Exception as e:
-                raise RockyError(
-                    f"Could not delete organization in the Katalogus after failing to create the "
-                    f"organization in the Katalogus: {e}"
-                ) from e
+                raise KATalogusException("Failed deleting organization in the Katalogus") from e
 
-            raise RockyError(f"Octopoes returned error creating organization: {e}") from e
+            raise OctopoesException("Failed creating organization in Octopoes") from e
 
     @staticmethod
     def _get_healthy_katalogus(organization_code: str) -> KATalogusClientV1:
@@ -125,10 +175,10 @@ class Organization(models.Model):
         try:
             health = katalogus_client.health()
         except RequestException as e:
-            raise RockyError("The Katalogus service is not up") from e
+            raise KATalogusDownException from e
 
         if not health.healthy:
-            raise RockyError("The Katalogus service is not healthy")
+            raise KATalogusUnhealthyException
 
         return katalogus_client
 
@@ -138,9 +188,10 @@ class Organization(models.Model):
         try:
             health = octopoes_client.root_health()
         except RequestException as e:
-            raise RockyError("The Octopoes service is not up") from e
+            raise OctopoesDownException from e
+
         if not health.healthy:
-            raise RockyError("The Octopoes service is not healthy")
+            raise OctopoesUnhealthyException
 
         return octopoes_client
 
@@ -155,13 +206,14 @@ class OrganizationMember(models.Model):
     class STATUSES(models.TextChoices):
         ACTIVE = "active", _("active")
         NEW = "new", _("new")
-        BLOCKED = "blocked", _("blocked")
 
     scan_levels = [scan_level.value for scan_level in SCAN_LEVEL]
 
     user = models.ForeignKey("account.KATUser", on_delete=models.PROTECT, related_name="members")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="members")
+    groups = models.ManyToManyField(Group, blank=True)
     status = models.CharField(choices=STATUSES.choices, max_length=64, default=STATUSES.NEW)
+    blocked = models.BooleanField(default=False)
     onboarded = models.BooleanField(default=False)
     trusted_clearance_level = models.IntegerField(
         default=-1, validators=[MinValueValidator(-1), MaxValueValidator(max(scan_levels))]
@@ -170,9 +222,43 @@ class OrganizationMember(models.Model):
         default=-1, validators=[MinValueValidator(-1), MaxValueValidator(max(scan_levels))]
     )
 
-    @property
-    def blocked(self):
-        return self.status == OrganizationMember.STATUSES.BLOCKED
+    @cached_property
+    def is_admin(self) -> bool:
+        return self.groups.filter(name=GROUP_ADMIN).exists()
+
+    @cached_property
+    def is_redteam(self) -> bool:
+        return self.groups.filter(name=GROUP_REDTEAM).exists()
+
+    @cached_property
+    def is_client(self) -> bool:
+        return self.groups.filter(name=GROUP_CLIENT).exists()
+
+    @cached_property
+    def all_permissions(self) -> Set[str]:
+        if self.user.is_active and self.user.is_superuser:
+            # Superuser always has all permissions
+            return {
+                f"{ct}.{name}" for ct, name in Permission.objects.values_list("content_type__app_label", "codename")
+            }
+
+        if self.blocked or not self.user.is_active:
+            # A blocked or inactive user doesn't have any permissions specific to this organization
+            organization_member_perms = set()
+        else:
+            organization_member_perms = {
+                f"{ct}.{name}"
+                for ct, name in Permission.objects.filter(group__organizationmember=self).values_list(
+                    "content_type__app_label", "codename"
+                )
+            }
+        return organization_member_perms | self.user.get_all_permissions()
+
+    def has_perm(self, perm: str) -> bool:
+        return perm in self.all_permissions
+
+    def has_perms(self, perm_list: Iterable[str]) -> bool:
+        return all(self.has_perm(perm) for perm in perm_list)
 
     class Meta:
         unique_together = ["user", "organization"]
@@ -198,7 +284,7 @@ class OOIInformation(models.Model):
         if self.consult_api:
             self.consult_api = False
             self.get_internet_description()
-        super(OOIInformation, self).save(*args, **kwargs)
+        super().save(*args, **kwargs)
 
     def clean(self):
         if "description" not in self.data:
@@ -214,7 +300,7 @@ class OOIInformation(models.Model):
 
     @property
     def description(self):
-        if self.data["description"] == "":
+        if not self.data["description"]:
             self.get_internet_description()
         return self.data["description"]
 
@@ -225,12 +311,3 @@ class OOIInformation(models.Model):
 
     def __str__(self):
         return self.id
-
-
-class Job(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    organization = models.ForeignKey(Organization, on_delete=models.SET_NULL, null=True)
-    boefje_id = models.CharField(max_length=128)
-    input_ooi = models.TextField(null=True)
-    arguments = models.JSONField()
-    created = models.DateTimeField(auto_now_add=True)

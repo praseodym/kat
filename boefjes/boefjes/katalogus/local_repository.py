@@ -1,24 +1,21 @@
-import pkgutil
-
-import os
-
+import hashlib
 import json
 import logging
+import pkgutil
 from pathlib import Path
-from typing import List, Optional, Dict, Tuple
+from typing import Dict, List, Optional, Tuple
 
+from boefjes.katalogus.models import RESERVED_LOCAL_ID, Boefje, Normalizer, PluginType
 from boefjes.plugins.models import (
-    BoefjeResource,
-    NormalizerResource,
-    BOEFJES_DIR,
     BOEFJE_DEFINITION_FILE,
-    NORMALIZER_DEFINITION_FILE,
+    BOEFJES_DIR,
     ENTRYPOINT_BOEFJES,
     ENTRYPOINT_NORMALIZERS,
+    NORMALIZER_DEFINITION_FILE,
+    BoefjeResource,
     ModuleException,
+    NormalizerResource,
 )
-from boefjes.katalogus.models import PluginType, Boefje, Normalizer, RESERVED_LOCAL_ID
-
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +52,7 @@ class LocalPluginRepository:
         path = boefjes[id_].path / "schema.json"
 
         if not path.exists():
-            logger.debug(f"Did not find schema for boefje {boefjes[id_]=}")
+            logger.debug("Did not find schema for boefje %s", boefjes[id_])
             return None
 
         return json.loads(path.read_text())
@@ -70,10 +67,10 @@ class LocalPluginRepository:
         path = boefje.path / "cover.jpg"
 
         if not path.exists():
-            logger.debug(f"Did not find cover for boefje {boefje=}")
+            logger.debug("Did not find cover for boefje %s", boefje)
             return self.default_cover_path()
 
-        logger.debug(f"Found cover for boefje {boefje=}")
+        logger.debug("Found cover for boefje %s", boefje)
 
         return path
 
@@ -94,7 +91,7 @@ class LocalPluginRepository:
 
         for path, package in paths_and_packages:
             try:
-                boefje_resources.append(BoefjeResource(path, package, RESERVED_LOCAL_ID))
+                boefje_resources.append(BoefjeResource(path, package))
             except ModuleException as exc:
                 logger.exception(exc)
 
@@ -104,9 +101,13 @@ class LocalPluginRepository:
         paths_and_packages = self._find_packages_in_path_containing_files(
             [NORMALIZER_DEFINITION_FILE, ENTRYPOINT_NORMALIZERS]
         )
-        normalizer_resources = [
-            NormalizerResource(path, package, RESERVED_LOCAL_ID) for path, package in paths_and_packages
-        ]
+        normalizer_resources = []
+
+        for path, package in paths_and_packages:
+            try:
+                normalizer_resources.append(NormalizerResource(path, package))
+            except ModuleException as exc:
+                logger.exception(exc)
 
         return {resource.normalizer.id: resource for resource in normalizer_resources}
 
@@ -132,7 +133,7 @@ class LocalPluginRepository:
 
     @staticmethod
     def create_relative_import_statement_from_cwd(package_dir: Path) -> str:
-        relative_path = str(package_dir.absolute()).replace(os.getcwd(), "")  # e.g. "/boefjes/plugins"
+        relative_path = str(package_dir.absolute()).replace(str(Path.cwd()), "")  # e.g. "/boefjes/plugins"
 
         return f"{relative_path[1:].replace('/', '.')}."  # Turns into "boefjes.plugins."
 
@@ -141,6 +142,7 @@ class LocalPluginRepository:
         def_file = boefje.path / "boefje.json"
         def_obj = json.loads(def_file.read_text())
         def_obj["repository_id"] = RESERVED_LOCAL_ID
+        def_obj["runnable_hash"] = get_runnable_hash(boefje.path)
 
         return Boefje.parse_obj(def_obj)
 
@@ -158,3 +160,19 @@ class LocalPluginRepository:
 
 def get_local_repository():
     return LocalPluginRepository(BOEFJES_DIR)
+
+
+def get_runnable_hash(path: Path) -> str:
+    """Returns sha256(file1 + file2 + ...) of all files in the given path."""
+
+    folder_hash = hashlib.sha256()
+
+    for file in sorted(path.glob("**/*")):
+        # Note that the hash does not include *.pyc files
+        # Thus there may be a desync between the source code and the cached, compiled bytecode
+        if file.is_file() and file.suffix != ".pyc":
+            with file.open("rb") as f:
+                while chunk := f.read(32768):
+                    folder_hash.update(chunk)
+
+    return folder_hash.hexdigest()

@@ -10,15 +10,24 @@ class Octopoes(HTTPService):
     name = "octopoes"
     health_endpoint = None
 
-    def __init__(self, host: str, source: str, orgs: List[Organisation]):
+    def __init__(
+        self,
+        host: str,
+        source: str,
+        orgs: List[Organisation],
+        timeout: int = 10,
+    ):
         self.orgs: List[Organisation] = orgs
-        super().__init__(host, source)
+        super().__init__(host, source, timeout)
 
     @exception_handler
     def get_objects_by_object_types(
-        self, organisation_id: str, object_types: List[str], scan_level: List[int] = []
+        self, organisation_id: str, object_types: List[str], scan_level: List[int]
     ) -> List[OOI]:
         """Get all oois from octopoes"""
+        if scan_level is None:
+            scan_level = []
+
         url = f"{self.host}/{organisation_id}/objects"
 
         params = {
@@ -46,10 +55,20 @@ class Octopoes(HTTPService):
         return oois
 
     @exception_handler
-    def get_random_objects(self, organisation_id: str, n: int) -> List[OOI]:
+    def get_random_objects(self, organisation_id: str, n: int, scan_level: List[int]) -> List[OOI]:
         """Get `n` random oois from octopoes"""
+        if scan_level is None:
+            scan_level = []
+
         url = f"{self.host}/{organisation_id}/objects/random"
-        response = self.get(url, params={"amount": str(n)})
+
+        params = {
+            "amount": str(n),
+            "scan_level": {s for s in scan_level},
+        }
+
+        response = self.get(url, params=params)
+
         return [OOI(**ooi) for ooi in response.json()]
 
     @exception_handler

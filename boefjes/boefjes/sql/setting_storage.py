@@ -8,10 +8,10 @@ from boefjes.config import settings
 from boefjes.katalogus.dependencies.context import get_context
 from boefjes.katalogus.dependencies.encryption import EncryptMiddleware, IdentityMiddleware, NaclBoxMiddleware
 from boefjes.katalogus.models import EncryptionMiddleware
-from boefjes.katalogus.storage.interfaces import SettingsStorage, SettingsNotFound
+from boefjes.katalogus.storage.interfaces import SettingsNotFound, SettingsStorage
 from boefjes.katalogus.storage.memory import SettingsStorageMemory
 from boefjes.sql.db import ObjectNotFoundException
-from boefjes.sql.db_models import SettingsInDB, OrganisationInDB
+from boefjes.sql.db_models import OrganisationInDB, SettingsInDB
 from boefjes.sql.session import SessionMixin
 
 logger = logging.getLogger(__name__)
@@ -23,58 +23,34 @@ class SQLSettingsStorage(SessionMixin, SettingsStorage):
 
         super().__init__(session)
 
-    def get_by_key(self, key: str, organisation_id: str, plugin_id: str) -> str:
-        instance = self._db_instance_by_id(organisation_id, plugin_id)
-
-        if key not in instance.values:
-            raise SettingsNotFound(organisation_id, plugin_id) from ObjectNotFoundException(
-                SettingsInDB, organisation_id=organisation_id
-            )
-
-        return json.loads(self.encryption.decode(instance.values))[key]
-
-    def get_all(self, organisation_id: str, plugin_id: str) -> Dict[str, str]:
-        try:
-            instance = self._db_instance_by_id(organisation_id, plugin_id)
-        except SettingsNotFound:
-            return {}
-
-        return {key: value for key, value in json.loads(self.encryption.decode(instance.values)).items()}
-
-    def create(self, key: str, value, organisation_id: str, plugin_id: str) -> None:
-        logger.info("Saving settings: %s for organisation %s", settings, organisation_id)
+    def upsert(self, values: Dict, organisation_id: str, plugin_id: str) -> None:
+        encrypted_values = self.encryption.encode(json.dumps(values))
 
         try:
             instance = self._db_instance_by_id(organisation_id, plugin_id)
-            json_settings = json.dumps({**json.loads(self.encryption.decode(instance.values)), **{key: value}})
-            instance.values = self.encryption.encode(json_settings)
+            instance.values = encrypted_values
         except SettingsNotFound:
             organisation = self.session.query(OrganisationInDB).filter(OrganisationInDB.id == organisation_id).first()
-            all_settings = {key: value}
 
             setting_in_db = SettingsInDB(
-                values=self.encryption.encode(json.dumps(all_settings)),
+                values=encrypted_values,
                 plugin_id=plugin_id,
                 organisation_pk=organisation.pk,
             )
             self.session.add(setting_in_db)
 
-    def update_by_key(self, key: str, value, organisation_id: str, plugin_id: str) -> None:
+    def get_all(self, organisation_id: str, plugin_id: str) -> Dict:
+        try:
+            instance = self._db_instance_by_id(organisation_id, plugin_id)
+        except SettingsNotFound:
+            return {}
+
+        return json.loads(self.encryption.decode(instance.values))
+
+    def delete(self, organisation_id: str, plugin_id: str) -> None:
         instance = self._db_instance_by_id(organisation_id, plugin_id)
 
-        instance.values = self.encryption.encode(
-            json.dumps({**json.loads(self.encryption.decode(instance.values)), **{key: value}})
-        )
-
-    def delete_by_key(self, key: str, organisation_id: str, plugin_id: str) -> None:
-        instance = self._db_instance_by_id(organisation_id, plugin_id)
-        filtered_values = {
-            instance_key: value
-            for instance_key, value in json.loads(self.encryption.decode(instance.values)).items()
-            if instance_key != key
-        }
-
-        instance.values = self.encryption.encode(json.dumps(filtered_values))
+        self.session.delete(instance)
 
     def _db_instance_by_id(self, organisation_id: str, plugin_id: str) -> SettingsInDB:
         instance = (

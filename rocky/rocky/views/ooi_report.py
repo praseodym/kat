@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import List, Set, Type
 
+from account.mixins import OrganizationView
 from django.contrib import messages
 from django.core.exceptions import BadRequest
 from django.http import FileResponse
@@ -8,40 +9,33 @@ from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-from django_otp.decorators import otp_required
+from katalogus.client import get_katalogus
+from tools.forms.ooi import OOIReportSettingsForm
+from tools.models import Organization
+from tools.view_helpers import convert_date_to_datetime, get_ooi_url
+
 from octopoes.models import OOI
 from octopoes.models.ooi.dns.records import (
-    DNSARecord,
     DNSAAAARecord,
+    DNSARecord,
     DNSMXRecord,
     DNSNSRecord,
     DNSSOARecord,
 )
 from octopoes.models.ooi.dns.zone import Hostname
-
-from two_factor.views.utils import class_view_decorator
-
-from account.mixins import OrganizationView
-from katalogus.client import get_katalogus
-
 from rocky.keiko import (
-    keiko_client,
-    ReportNotFoundException,
     GeneratingReportFailed,
+    ReportNotFoundException,
     ReportsService,
     build_findings_list_from_store,
+    keiko_client,
 )
-from rocky.views.finding_list import FindingListView
-from rocky.views.mixins import OOIBreadcrumbsMixin, SingleOOITreeMixin
+from rocky.views.finding_list import generate_findings_metadata
+from rocky.views.mixins import FindingList, OctopoesView, SeveritiesMixin, SingleOOITreeMixin
 from rocky.views.ooi_view import BaseOOIDetailView
 
-from tools.forms.ooi import OOIReportSettingsForm
-from tools.models import Organization
-from tools.view_helpers import get_ooi_url, convert_date_to_datetime
 
-
-@class_view_decorator(otp_required)
-class OOIReportView(OOIBreadcrumbsMixin, BaseOOIDetailView):
+class OOIReportView(BaseOOIDetailView):
     template_name = "oois/ooi_report.html"
     connector_form_class = OOIReportSettingsForm
 
@@ -76,7 +70,6 @@ class OOIReportView(OOIBreadcrumbsMixin, BaseOOIDetailView):
         return context
 
 
-@class_view_decorator(otp_required)
 class OOIReportPDFView(SingleOOITreeMixin):
     def setup(self, request, *args, **kwargs):
         super().setup(request, *args, **kwargs)
@@ -110,18 +103,24 @@ class OOIReportPDFView(SingleOOITreeMixin):
         )
 
 
-@class_view_decorator(otp_required)
-class FindingReportPDFView(FindingListView):
+class FindingReportPDFView(SeveritiesMixin, OctopoesView):
     paginate_by = None
 
     def get(self, request, *args, **kwargs):
+        severities = self.get_severities()
+        findings = FindingList(
+            self.octopoes_api_connector,
+            self.get_observed_at(),
+            severities,
+        )
+
         reports_service = ReportsService(keiko_client)
 
         try:
             report = reports_service.get_organization_finding_report(
                 self.get_observed_at(),
                 self.organization.name,
-                super().get_queryset(),
+                generate_findings_metadata(findings, severities),
             )
         except GeneratingReportFailed:
             messages.error(request, _("Generating report failed. See Keiko logs for more information."))
@@ -137,17 +136,14 @@ class FindingReportPDFView(FindingListView):
         )
 
 
-"""
-The new report
-Generates report from a starting point OOI with a filtered set of it's sub OOI's
-and a filtered set of findings belonging to those OOIs.
+# Generates report from a starting point OOI with a filtered set of it's sub OOI's
+# and a filtered set of findings belonging to those OOIs.
 
-boefjes_required - Set of possible boefjes
-boefjes_optional - Set of possible boefjes
-start_ooi - OOI that is the starting point of the report
-allowed_oois - Set of OOIs that are interesting for this specific report
-allowed_finding_types - Set of finding types that are interesting for this report
-"""
+# boefjes_required - Set of possible boefjes
+# boefjes_optional - Set of possible boefjes
+# start_ooi - OOI that is the starting point of the report
+# allowed_oois - Set of OOIs that are interesting for this specific report
+# allowed_finding_types - Set of finding types that are interesting for this report
 
 
 class Report(OrganizationView):

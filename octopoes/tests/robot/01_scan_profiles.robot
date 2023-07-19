@@ -11,6 +11,7 @@ Test Teardown       Teardown Test
 
 *** Test Cases ***
 Inheritance Of Two Declared Scan Profiles
+    Await Sync
     Declare Scan Profile    ${REF_HOSTNAME}    ${4}
     Declare Scan Profile    ${REF_IPADDR}    ${2}
     Await Sync
@@ -25,18 +26,19 @@ Inheritance Of Two Declared Scan Profiles
     Verify Scan LeveL Filter    2    ${2}
     Verify Scan LeveL Filter    3    ${0}
     Verify Scan LeveL Filter    4    ${3}
-    Verify Scan LeveL Filter    0    ${1}
+    Verify Scan LeveL Filter    0    ${7}
     Verify Scan LeveL Filter    ${{ [2,4] }}    ${5}
     Verify Scan LeveL Filter    ${{ [3,4] }}    ${3}
-    Verify Scan LeveL Filter    ${{ [2,0] }}    ${3}
+    Verify Scan LeveL Filter    ${{ [2,0] }}    ${9}
     Verify Scan Profile Mutation Queue    ${REF_HOSTNAME}    ${{[0, 4]}}
     Verify Scan Profile Mutation Queue    ${REF_IPADDR}    ${{[0, 2]}}
     Verify Scan Profile Mutation Queue    ${REF_RESOLVEDHOSTNAME}    ${{[0, 4]}}
-    Total Object Count Should Be    6
+    Total Object Count Should Be    12
 
 Recalculate Inheritance After Modification
     Declare Scan Profile    ${REF_HOSTNAME}    ${4}
     Declare Scan Profile    ${REF_IPADDR}    ${2}
+    Await Sync
     Recalculate Scan Profiles
     Set Scan Profile To Empty    ${REF_HOSTNAME}
     Recalculate Scan Profiles
@@ -80,14 +82,6 @@ Set Scan Profile To Empty
     ...    json=${data}
     ...    params=${params}
     Should Be Equal As Integers    ${response.status_code}    200
-
-Recalculate Scan Profiles
-    ${params}    Get Valid Time Params
-    ${response}    Get
-    ...    ${OCTOPOES_URI}/scan_profiles/recalculate
-    ...    params=${params}
-    Should Be Equal As Integers    ${response.status_code}    200
-    Await Sync
 
 Verify Scan Level
     [Arguments]    ${reference}    ${scan_level}

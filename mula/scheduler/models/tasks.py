@@ -1,12 +1,15 @@
+import enum
 import uuid
 from datetime import datetime, timezone
-from enum import Enum as _Enum
 from typing import ClassVar, List, Optional
 
 import mmh3
 from pydantic import BaseModel, Field
-from sqlalchemy import JSON, Column, DateTime, Enum, String
+from sqlalchemy import Column, DateTime, Enum, String
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.schema import Index
 from sqlalchemy.sql import func
+from sqlalchemy.sql.expression import text
 
 from scheduler.utils import GUID
 
@@ -17,7 +20,7 @@ from .queue import PrioritizedItem
 from .raw_data import RawData
 
 
-class TaskStatus(str, _Enum):
+class TaskStatus(str, enum.Enum):
     """Status of a task."""
 
     PENDING = "pending"
@@ -26,6 +29,7 @@ class TaskStatus(str, _Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class Task(BaseModel):
@@ -39,6 +43,9 @@ class Task(BaseModel):
 
     modified_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    def __repr__(self):
+        return f"Task(id={self.id}, scheduler_id={self.scheduler_id}, type={self.type}, status={self.status})"
+
     class Config:
         orm_mode = True
 
@@ -51,7 +58,7 @@ class TaskORM(Base):
     id = Column(GUID, primary_key=True)
     scheduler_id = Column(String)
     type = Column(String)
-    p_item = Column(JSON, nullable=False)
+    p_item = Column(JSONB, nullable=False)
     status = Column(
         Enum(TaskStatus),
         nullable=False,
@@ -70,6 +77,14 @@ class TaskORM(Base):
         onupdate=func.now(),
     )
 
+    __table_args__ = (
+        Index(
+            "ix_p_item_hash",
+            text("(p_item->>'hash')"),
+            created_at.desc(),
+        ),
+    )
+
 
 class NormalizerTask(BaseModel):
     """NormalizerTask represent data needed for a Normalizer to run."""
@@ -81,10 +96,7 @@ class NormalizerTask(BaseModel):
     raw_data: RawData
 
     @property
-    def hash(self):
-        return self.__hash__()
-
-    def __hash__(self):
+    def hash(self) -> str:
         """Make NormalizerTask hashable, so that we can de-duplicate it when
         used in the PriorityQueue. We hash the combination of the attributes
         normalizer.id since this combination is unique."""
@@ -106,10 +118,7 @@ class BoefjeTask(BaseModel):
     dispatches: List[Normalizer] = Field(default_factory=list)
 
     @property
-    def hash(self):
-        return self.__hash__()
-
-    def __hash__(self) -> int:
+    def hash(self) -> str:
         """Make BoefjeTask hashable, so that we can de-duplicate it when used
         in the PriorityQueue. We hash the combination of the attributes
         input_ooi and boefje.id since this combination is unique."""

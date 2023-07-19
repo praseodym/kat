@@ -6,8 +6,7 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-
-from tools.models import OrganizationMember, Organization
+from tools.models import Organization, OrganizationMember
 
 
 class KATUserManager(BaseUserManager):
@@ -61,7 +60,7 @@ class KATUser(AbstractBaseUser, PermissionsMixin):
     # Because we migrated from using the standard Django User model, we need
     # explicitly use AutoField here instead of using BigAutoField by default
     id = models.AutoField(primary_key=True, verbose_name="ID")
-    full_name = models.CharField(_("full name"), max_length=150, blank=True)
+    full_name = models.CharField(_("full name"), max_length=150)
     email = LowercaseEmailField(_("email"), max_length=254, unique=True)
     is_staff = models.BooleanField(
         _("staff status"),
@@ -72,13 +71,13 @@ class KATUser(AbstractBaseUser, PermissionsMixin):
         _("active"),
         default=True,
         help_text=_(
-            "Designates whether this user should be treated as active. " "Unselect this instead of deleting accounts."
+            "Designates whether this user should be treated as active. Unselect this instead of deleting accounts."
         ),
     )
     date_joined = models.DateTimeField(_("date joined"), default=timezone.now)
 
     USERNAME_FIELD = "email"
-    REQUIRED_FIELDS = []
+    REQUIRED_FIELDS = ["full_name"]
 
     objects = KATUserManager()
 
@@ -105,10 +104,7 @@ class KATUser(AbstractBaseUser, PermissionsMixin):
         """
         if self.is_superuser:
             return self.all_organizations
-        return [
-            m.organization
-            for m in filter(lambda o: o.status is not OrganizationMember.STATUSES.BLOCKED, self.organization_members)
-        ]
+        return [m.organization for m in self.organization_members if not m.blocked]
 
     @cached_property
     def organizations_including_blocked(self) -> List[Organization]:

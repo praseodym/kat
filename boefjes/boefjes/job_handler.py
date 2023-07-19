@@ -1,22 +1,13 @@
 import logging
-from datetime import datetime, timezone, timedelta
+import os
+import traceback
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, List, Dict, Set
+from typing import Any, Dict, List, Set
 
 import requests
-
-from octopoes.models.types import OOIType
 from pydantic.tools import parse_obj_as
-
-from boefjes.katalogus.local_repository import LocalPluginRepository
-from octopoes.api.models import Observation, Declaration
-from octopoes.connector.octopoes import OctopoesAPIConnector
-from octopoes.models import OOI
-from octopoes.models import Reference
-from octopoes.models.exception import ObjectNotFoundException
 from requests import RequestException
-
-from boefjes.runtime_interfaces import Handler, BoefjeJobRunner, NormalizerJobRunner
 
 from boefjes.clients.bytes_client import BytesAPIClient
 from boefjes.config import settings
@@ -25,6 +16,13 @@ from boefjes.job_models import (
     NormalizerMeta,
     NormalizerPlainOOI,
 )
+from boefjes.katalogus.local_repository import LocalPluginRepository
+from boefjes.runtime_interfaces import BoefjeJobRunner, Handler, NormalizerJobRunner
+from octopoes.api.models import Declaration, Observation
+from octopoes.connector.octopoes import OctopoesAPIConnector
+from octopoes.models import OOI, Reference
+from octopoes.models.exception import ObjectNotFoundException
+from octopoes.models.types import OOIType
 
 logger = logging.getLogger(__name__)
 bytes_api_client = BytesAPIClient(
@@ -86,9 +84,19 @@ def get_environment_settings(boefje_meta: BoefjeMeta, environment_keys: List[str
             f"{settings.katalogus_api}/v1/organisations/{boefje_meta.organization}/{boefje_meta.boefje.id}/settings"
         ).json()
 
-        return {k: v for k, v in environment.items() if k in environment_keys}
+        # Add prefixed BOEFJE_* global environment variables
+        for key, value in os.environ.items():
+            if key.startswith("BOEFJE_"):
+                katalogus_key = key.split("BOEFJE_", 1)[1]
+                # Only pass the environment variable if it is not explicitly set through the katalogus,
+                # if and only if they are defined in boefje.json
+                if katalogus_key in environment_keys and katalogus_key not in environment:
+                    environment[katalogus_key] = value
+
+        return {k: str(v) for k, v in environment.items() if k in environment_keys}
     except RequestException:
         logger.exception("Error getting environment settings")
+        raise
 
     return {}
 
@@ -116,10 +124,10 @@ def _collect_default_mime_types(boefje_meta: BoefjeMeta) -> Set[str]:
 class BoefjeHandler(Handler):
     def __init__(self, job_runner, local_repository: LocalPluginRepository):
         self.job_runner: BoefjeJobRunner = job_runner
-        self.local_repository: LocalPluginRepository = local_repository  # TODO: abstract (e.g. LXD version)
+        self.local_repository: LocalPluginRepository = local_repository
 
     def handle(self, boefje_meta: BoefjeMeta) -> None:
-        logger.info("Handling boefje %s[%s]", boefje_meta.boefje.id, boefje_meta.id)
+        logger.info("Handling boefje %s[task_id=%s]", boefje_meta.boefje.id, boefje_meta.id)
 
         if boefje_meta.input_ooi:
             boefje_meta.arguments["input"] = serialize_ooi(
@@ -129,20 +137,26 @@ class BoefjeHandler(Handler):
                 )
             )
 
-        env_keys = self.local_repository.by_id(boefje_meta.boefje.id).environment_keys
-        environment = get_environment_settings(boefje_meta, env_keys)
+        boefje_resource = self.local_repository.by_id(boefje_meta.boefje.id)
+
+        env_keys = boefje_resource.environment_keys
+
+        boefje_meta.runnable_hash = boefje_resource.runnable_hash
+        boefje_meta.environment = get_environment_settings(boefje_meta, env_keys) if env_keys else {}
 
         mime_types = _collect_default_mime_types(boefje_meta)
+
         logger.info("Starting boefje %s[%s]", boefje_meta.boefje.id, boefje_meta.id)
 
         boefje_meta.started_at = datetime.now(timezone.utc)
+
         boefje_results = None
 
         try:
-            boefje_results = self.job_runner.run(boefje_meta, environment)
-        except Exception as e:
+            boefje_results = self.job_runner.run(boefje_meta, boefje_meta.environment)
+        except Exception:
             logger.exception("Error running boefje %s[%s]", boefje_meta.boefje.id, boefje_meta.id)
-            boefje_results = [({"error/boefje"}, str(e))]
+            boefje_results = [({"error/boefje"}, traceback.format_exc())]
 
             raise
         finally:
@@ -167,7 +181,7 @@ class NormalizerHandler(Handler):
         logger.info("Handling normalizer %s[%s]", normalizer_meta.normalizer.id, normalizer_meta.id)
 
         bytes_api_client.login()
-        raw = bytes_api_client.get_raw(normalizer_meta.raw_data.boefje_meta.id, normalizer_meta.raw_data.id)
+        raw = bytes_api_client.get_raw(normalizer_meta.raw_data.id)
 
         normalizer_meta.started_at = datetime.now(timezone.utc)
 

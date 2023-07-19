@@ -1,8 +1,8 @@
 import hashlib
 from datetime import datetime, timedelta
-from typing import Dict, Optional, List, Union, Literal
+from typing import Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, Extra, constr
+from pydantic import BaseModel, Extra, Field, constr
 
 
 class JobException(Exception):
@@ -44,6 +44,8 @@ class BoefjeMeta(Job):
     input_ooi: Optional[str]
     arguments: Dict = {}
     organization: str
+    runnable_hash: Optional[str]
+    environment: Optional[Dict[str, str]]
 
     @property
     def parameterized_arguments_hash(self) -> str:

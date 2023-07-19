@@ -1,7 +1,7 @@
-from os import getenv
 from enum import Enum
-from ipaddress import ip_address, IPv6Address
-from typing import List, Tuple, Union, Optional
+from ipaddress import IPv6Address, ip_address
+from os import getenv
+from typing import List, Optional, Tuple, Union
 
 import docker
 
@@ -29,6 +29,7 @@ def build_nmap_arguments(host: str, protocol: Protocol, top_ports: Optional[int]
     ip = ip_address(host)
     args = [
         "nmap",
+        "--open",
         "-T4",
         "-Pn",
         "-r",

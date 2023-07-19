@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Union, Dict, Tuple
+from typing import Dict, Tuple, Union
 
 from boefjes.job_models import BoefjeMeta, NormalizerMeta, NormalizerOutput
 
@@ -19,7 +19,7 @@ class NormalizerJobRunner:
         raise NotImplementedError()
 
 
-class RuntimeManager:
+class WorkerManager:
     class Queue(Enum):
         BOEFJES = "boefje"
         NORMALIZERS = "normalizer"

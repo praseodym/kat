@@ -9,17 +9,19 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 build: build-rocky build-rocky-frontend
 
 build-rocky:
-	docker-compose run --rm rocky make build-rocky-native
+# Set DATABASE_MIGRATION=false to prevent entrypoint from running migration
+	docker-compose run --rm -e DATABASE_MIGRATION=false rocky make build-rocky-native
 
 build-rocky-native:
+	while ! nc -vz $$ROCKY_DB_HOST $$ROCKY_DB_PORT; do sleep 0.1; done
 	python3 manage.py migrate
-	python3 manage.py createsuperuser
+	-python3 manage.py createsuperuser --no-input
 	python3 manage.py loaddata OOI_database_seed.json
 	python3 manage.py setup_dev_account
 	python3 manage.py compilemessages
 
 build-rocky-frontend:
-	docker run --rm -v $$PWD:/app/rocky node:18-bullseye sh -c "cd /app/rocky && yarn --ignore-engine && yarn build && chown -R $$(id -u) .parcel-cache node_modules assets/dist"
+	docker run --rm -v $$PWD:/app/rocky node:18-bookworm sh -c "cd /app/rocky && yarn --ignore-engine && yarn build && chown -R $$(id -u) .parcel-cache node_modules assets/dist"
 
 almost-flush:
 	docker-compose run --rm rocky python manage.py almost_flush
@@ -55,7 +57,7 @@ languages:
 
 lang: languages
 
-debian:
+debian11:
 	mkdir -p build
 	docker run --rm \
 	--env PKG_NAME=kat-rocky \
@@ -65,10 +67,10 @@ debian:
 	--mount type=bind,src=${CURDIR},dst=/app \
 	--mount type=bind,src=${CURDIR}/../octopoes,dst=/octopoes \
 	--workdir /app \
-	kat-debian-build-image \
+	kat-debian11-build-image \
 	packaging/scripts/build-debian-package.sh
 
-ubuntu:
+debian12:
 	mkdir -p build
 	docker run --rm \
 	--env PKG_NAME=kat-rocky \
@@ -78,7 +80,20 @@ ubuntu:
 	--mount type=bind,src=${CURDIR},dst=/app \
 	--mount type=bind,src=${CURDIR}/../octopoes,dst=/octopoes \
 	--workdir /app \
-	kat-ubuntu-build-image \
+	kat-debian12-build-image \
+	packaging/scripts/build-debian-package.sh
+
+ubuntu22.04:
+	mkdir -p build
+	docker run --rm \
+	--env PKG_NAME=kat-rocky \
+	--env REPOSITORY=minvws/nl-kat-rocky \
+	--env RELEASE_VERSION=${RELEASE_VERSION} \
+	--env RELEASE_TAG=${RELEASE_TAG} \
+	--mount type=bind,src=${CURDIR},dst=/app \
+	--mount type=bind,src=${CURDIR}/../octopoes,dst=/octopoes \
+	--workdir /app \
+	kat-ubuntu22.04-build-image \
 	packaging/scripts/build-debian-package.sh
 
 clean:

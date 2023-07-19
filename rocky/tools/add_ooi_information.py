@@ -1,20 +1,11 @@
 import datetime
-import hashlib
-import json
-import os
-import re
+import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple, List, Dict, Union
+from itertools import product
+from typing import List, Optional, Tuple
 
 import requests
-from ares import CVESearch
 from bs4 import BeautifulSoup
-from cwe import Database
-from django.conf import settings
-from itertools import product
-import logging
-
-RETIREJS_SOURCE = "https://github.com/RetireJS/retire.js/blob/master/repository/jsrepository.json"
 
 SEPARATOR = "|"
 
@@ -34,113 +25,6 @@ class _PortInfo:
     port: int
     protocols: list
     description: str
-
-
-def cve_info(cve_id: str) -> dict:
-    """Uses the ares module to find information on cves"""
-    cve_search = CVESearch()
-    cve_information = cve_search.id(cve_id)
-
-    if cve_information:
-        return {
-            "description": cve_information.get("summary"),
-            "cvss": cve_information.get("cvss"),
-            "source": f"https://cve.circl.lu/cve/{cve_id}",
-            "information updated": datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
-        }
-
-    return {"description": "Not found"}
-
-
-def snyk_info(snyk_id: str) -> dict:
-    """Uses the ares module to find information on cves"""
-    snyk_information = _snyk_search(snyk_id)
-
-    if snyk_information:
-        return {
-            "description": snyk_information.get("summary"),
-            "risk": snyk_information.get("risk"),
-            "source": f"https://snyk.io/vuln/{snyk_id}",
-            "affected versions": snyk_information.get("affected_versions"),
-            "information updated": datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
-        }
-
-    return {"description": "Not found"}
-
-
-def _snyk_search(snyk_id: str) -> Dict:
-    url_snyk = f"https://snyk.io/vuln/{snyk_id}"
-    page = requests.get(url_snyk)
-    soup = BeautifulSoup(page.content, "html.parser")
-    return {
-        "risk": soup.select("[data-snyk-test-score]")[0].attrs["data-snyk-test-score"],
-        "affected_versions": soup.select("[data-snyk-test='vuln versions']")[0].text.strip(),
-        "summary": soup.findAll("h2", text=re.compile(r"Overview"))[0].parent.text.strip().split("\n")[2],
-    }
-
-
-def retirejs_info(retirejs_id: str) -> dict:
-    """Uses the retirejs vulnerabilities list to find outdated javascript instances"""
-    filename_path = os.path.join(settings.BASE_DIR, "data/retirejs.json")
-    with open(filename_path, encoding="utf-8") as json_file:
-        data = json.load(json_file)
-
-    _, name, hashed_id = retirejs_id.split("-")
-
-    software = [
-        brand
-        for brand in data
-        if name == brand.lower().replace(" ", "").replace("_", "").replace("-", "").replace(".", "")
-    ][0]
-    issues = data[software]["vulnerabilities"]
-    finding = [issue for issue in issues if _hash_identifiers(issue["identifiers"]) == hashed_id]
-
-    if finding:
-        return {
-            "description": _create_description(finding[0]),
-            "severity": finding[0]["severity"],
-            "source": RETIREJS_SOURCE,
-            "information updated": datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
-        }
-
-    return {"description": "Not found"}
-
-
-def _hash_identifiers(identifiers: Dict[str, Union[str, List[str]]]) -> str:
-    pre_hash = ""
-    for identifier in identifiers.values():
-        pre_hash += "".join(identifier)
-    return hashlib.sha1(pre_hash.encode()).hexdigest()[:4]
-
-
-def _create_description(finding: dict) -> str:
-    if "summary" in finding["identifiers"]:
-        description = finding["identifiers"]["summary"] + ". More information at: "
-    else:
-        description = "No summary available. Find more information at: "
-
-    info = finding["info"]
-    description += ", ".join(info[:-1])
-    if len(info) > 1:
-        description += " or " + info[-1]
-    else:
-        description += info[0]
-
-    return description
-
-
-def cwe_info(cwe_id: str) -> dict:
-    """Uses the cwe module to find cwe descriptions"""
-    db = Database()
-    weakness = db.get(cwe_id.split("-")[1])
-    if weakness:
-        return {
-            "description": weakness.description,
-            "source": f'https://cwe.mitre.org/data/definitions/{cwe_id.split("-")[1]}.html',
-            "information updated": datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
-            "risk": "Very low",
-        }
-    return {"description": "Not found", "risk": "Very low"}
 
 
 def iana_service_table(search_query: str) -> List[_Service]:
@@ -179,7 +63,7 @@ def iana_service_table(search_query: str) -> List[_Service]:
 def service_info(value) -> Tuple[str, str]:
     """Provides information about IP Services such as common assigned ports for certain protocols and descriptions"""
     services = iana_service_table(value)
-    source = "https://www.iana.org/assignments/service-names-port-numbers/" "service-names-port-numbers.xhtml"
+    source = "https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml"
     if not services:
         return f"No description found for {value}", "No source found"
 
@@ -255,9 +139,9 @@ def table_to_2d(table_tag):
     return table
 
 
-def _map_usage_value(value: str):
+def _map_usage_value(value: str) -> bool:
     value = value.lower().strip()
-    return value is not None and value != "" and value != "no"
+    return value is not None and value and value != "no"
 
 
 def wiki_port_tables() -> List[_PortInfo]:
@@ -307,26 +191,9 @@ def port_info(number: str, protocol: str) -> Tuple[str, str]:
     return ". ".join(descriptions), source
 
 
-def capec_info(capec_id: str) -> dict:
-    response = requests.get(f'https://capec.mitre.org/data/definitions/{capec_id.split("-")[1]}.html')
-    soup = BeautifulSoup(response.text, "html.parser")
-    title = soup.select("h2")[0].text
-    if not title.startswith("CAPEC-"):
-        return {
-            "description": title,
-            "risk": "Very low",
-        }
-    return {
-        "description": title.split(": ")[1],
-        "source": f'https://https://capec.mitre.org/data/definitions/{capec_id.split("-")[1]}.html',
-        "information updated": datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
-        "risk": "Very low",
-    }
-
-
 def get_info(ooi_type: str, natural_key: str) -> dict:
     """Adds OOI information to the OOI Information table"""
-    logger.info(f"Getting OOI information for {ooi_type} {natural_key}")
+    logger.info("Getting OOI information for %s %s", ooi_type, natural_key)
     if ooi_type == "IPPort":
         protocol, port = natural_key.split(SEPARATOR)
         description, source = port_info(port, protocol)
@@ -342,14 +209,4 @@ def get_info(ooi_type: str, natural_key: str) -> dict:
             "source": source,
             "information updated": datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
         }
-    if ooi_type == "CVEFindingType":
-        return cve_info(natural_key)
-    if ooi_type == "CWEFindingType":
-        return cwe_info(natural_key)
-    if ooi_type == "CAPECFindingType":
-        return capec_info(natural_key)
-    if ooi_type == "RetireJSFindingType":
-        return retirejs_info(natural_key)
-    if ooi_type == "SnykFindingType":
-        return snyk_info(natural_key)
     return {"description": ""}

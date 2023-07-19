@@ -3,7 +3,7 @@ version: "3.9"
 services:
   rabbitmq:
     restart: on-failure
-    image: "rabbitmq:3.9-management"
+    image: "rabbitmq:3.11-management"
     ports:
       - "127.0.0.1:5672:5672"
       - "127.0.0.1:15672:15672"
@@ -16,6 +16,7 @@ services:
 
   postgres:
     image: postgres:15
+    shm_size: 256MB
     ports:
       - "0.0.0.0:5432:5432"
     volumes:
@@ -27,7 +28,7 @@ services:
       APPS: "ROCKY BYTES KATALOGUS SCHEDULER"
 
   crux:
-    image: "ghcr.io/dekkers/xtdb-http-multinode:v1.0.4"
+    image: "ghcr.io/dekkers/xtdb-http-multinode:v1.0.6"
     restart: on-failure
     ports:
       - "127.0.0.1:3000:3000"

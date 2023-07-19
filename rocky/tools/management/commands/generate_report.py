@@ -1,22 +1,19 @@
-from pathlib import Path
-
 import sys
 from datetime import datetime, timezone
 from logging import getLogger
-from typing import Optional, List, Dict, Any
-
-from django.contrib.auth import get_user_model
-from django.core.management import BaseCommand
-from octopoes.connector.octopoes import OctopoesAPIConnector
-from octopoes.models import DEFAULT_SCAN_LEVEL_FILTER, DEFAULT_SCAN_PROFILE_TYPE_FILTER
-from octopoes.models.ooi.findings import Finding, MutedFinding
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from django.conf import settings
-from rocky.keiko import keiko_client, ReportsService
+from django.contrib.auth import get_user_model
+from django.core.management import BaseCommand
+
+from octopoes.connector.octopoes import OctopoesAPIConnector
+from octopoes.models.ooi.findings import RiskLevelSeverity
+from rocky.keiko import ReportsService, keiko_client
 from rocky.views.finding_list import generate_findings_metadata
-from rocky.views.mixins import OOIList
+from rocky.views.mixins import FindingList
 from tools.models import Organization
-from tools.ooi_helpers import RiskLevelSeverity
 
 User = get_user_model()
 logger = getLogger(__name__)
@@ -43,18 +40,17 @@ class Command(BaseCommand):
             "--min-severity",
             "-s",
             type=RiskLevelSeverity,
-            default=RiskLevelSeverity.NONE,
+            default=RiskLevelSeverity.UNKNOWN,
             choices=[severity for severity in RiskLevelSeverity],
             help="Only include Findings with at least this severity in the report.",
         )
 
     def handle(self, *args, **options):
-        if not options["output"]:
-            if self.stdout.isatty():
-                self.stderr.write(
-                    "Can't print PDF file directly to stdout. Set a destination path or pipe the output to a file"
-                )
-                sys.exit(1)
+        if not options["output"] and self.stdout.isatty():
+            self.stderr.write(
+                "Can't print PDF file directly to stdout. Set a destination path or pipe the output to a file"
+            )
+            sys.exit(1)
 
         organization = self.get_organization(**options)
 
@@ -78,23 +74,14 @@ class Command(BaseCommand):
 
     @staticmethod
     def get_findings_metadata(organization, valid_time, options) -> List[Dict[str, Any]]:
-        ooi_list = OOIList(
+        severities = [severity for severity in RiskLevelSeverity if severity >= options["min_severity"]]
+        findings = FindingList(
             OctopoesAPIConnector(settings.OCTOPOES_API, organization.code),
-            {Finding},
             valid_time,
-            scan_level=DEFAULT_SCAN_LEVEL_FILTER,
-            scan_profile_type=DEFAULT_SCAN_PROFILE_TYPE_FILTER,
+            severities,
         )
-        muted_list = OOIList(
-            OctopoesAPIConnector(settings.OCTOPOES_API, organization.code),
-            {MutedFinding},
-            valid_time,
-            scan_level=DEFAULT_SCAN_LEVEL_FILTER,
-            scan_profile_type=DEFAULT_SCAN_PROFILE_TYPE_FILTER,
-        )
-        severities = [item for item in RiskLevelSeverity if item >= options["min_severity"]]
 
-        return generate_findings_metadata(ooi_list, muted_list, severities)
+        return generate_findings_metadata(findings, severities)
 
     @staticmethod
     def get_organization(**options) -> Optional[Organization]:

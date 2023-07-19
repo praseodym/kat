@@ -6,26 +6,24 @@ import unittest
 import uuid
 from typing import Optional
 
-from scheduler import models, queues
+from scheduler import config, models, queues
 from scheduler.models import Base
 from scheduler.repositories import sqlalchemy
 from sqlalchemy.orm import sessionmaker
+
+from tests.mocks import queue as mock_queue
 from tests.utils import functions
-
-
-class MockPriorityQueue(queues.PriorityQueue):
-    def create_hash(self, item: functions.TestModel):
-        return hash(item.id)
 
 
 class PriorityQueueTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.datastore = sqlalchemy.SQLAlchemy("sqlite:///")
+        cfg = config.settings.Settings()
+        self.datastore = sqlalchemy.SQLAlchemy(cfg.database_dsn)
         Base.metadata.create_all(self.datastore.engine)
 
         self.pq_store = sqlalchemy.PriorityQueueStore(datastore=self.datastore)
 
-        self.pq = MockPriorityQueue(
+        self.pq = mock_queue.MockPriorityQueue(
             pq_id="test",
             maxsize=10,
             item_type=functions.TestModel,
@@ -37,7 +35,7 @@ class PriorityQueueTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         session = sessionmaker(bind=self.datastore.engine)()
 
-        for table in Base.metadata.tables.keys():
+        for table in Base.metadata.tables:
             session.execute(f"DELETE FROM {table}")
 
         session.commit()

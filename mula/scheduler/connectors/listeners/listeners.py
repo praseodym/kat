@@ -27,6 +27,9 @@ class Listener(Connector):
     def listen(self) -> None:
         raise NotImplementedError
 
+    def stop(self) -> None:
+        raise NotImplementedError
+
 
 class RabbitMQ(Listener):
     """A RabbitMQ Listener implementation that allows subclassing of specific
@@ -38,6 +41,10 @@ class RabbitMQ(Listener):
         dsn:
             A string defining the data source name of the RabbitMQ host to
             connect to.
+        connection:
+            A pika.BlockingConnection instance.
+        channel:
+            A pika.BlockingConnection.channel instance.
     """
 
     def __init__(self, dsn: str):
@@ -51,26 +58,27 @@ class RabbitMQ(Listener):
         super().__init__()
         self.dsn = dsn
 
+        self.connection = pika.BlockingConnection(pika.URLParameters(self.dsn))
+        self.channel = self.connection.channel()
+
     def dispatch(self, body: bytes) -> None:
         """Dispatch a message without a return value"""
         raise NotImplementedError
 
-    def basic_consume(self, queue: str) -> None:
-        connection = pika.BlockingConnection(pika.URLParameters(self.dsn))
-        channel = connection.channel()
-        channel.basic_consume(queue, on_message_callback=self.callback)
-        channel.start_consuming()
+    def basic_consume(self, queue: str, durable: bool, prefetch_count: int) -> None:
+        self.channel.queue_declare(queue=queue, durable=durable)
+        self.channel.basic_qos(prefetch_count=prefetch_count)
+        self.channel.basic_consume(queue, on_message_callback=self.callback)
+        self.channel.start_consuming()
 
     def get(self, queue: str) -> Optional[Dict[str, object]]:
-        connection = pika.BlockingConnection(pika.URLParameters(self.dsn))
-        channel = connection.channel()
-        method, properties, body = channel.basic_get(queue)
+        method, properties, body = self.channel.basic_get(queue)
 
         if body is None:
             return None
 
         response = json.loads(body)
-        channel.basic_ack(method.delivery_tag)
+        self.channel.basic_ack(method.delivery_tag)
 
         return response
 
@@ -81,7 +89,10 @@ class RabbitMQ(Listener):
         properties: pika.spec.BasicProperties,
         body: bytes,
     ) -> None:
-        self.logger.debug(" [x] Received %r", body)
+        """Callback function that is called when a message is received on the
+        queue.
+        """
+        self.logger.debug("Received message on queue %s, message: %r", method.routing_key, body)
 
         self.dispatch(body)
 
@@ -99,3 +110,15 @@ class RabbitMQ(Listener):
             return False
 
         return self.is_host_available(parsed_url.hostname, parsed_url.port)
+
+    def stop(self) -> None:
+        self.logger.debug("Stopping RabbitMQ connection")
+
+        self.connection.add_callback_threadsafe(self._close_callback)
+
+        self.logger.debug("RabbitMQ connection closed")
+
+    def _close_callback(self):
+        self.channel.stop_consuming()
+        self.channel.close()
+        self.connection.close()

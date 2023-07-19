@@ -1,12 +1,12 @@
-from typing import List, Iterator, Union
+from typing import Dict, Iterator, List, Union
 
 from octopoes.models import OOI
 from octopoes.models.ooi.certificate import (
-    X509Certificate,
     SubjectAlternativeNameHostname,
     SubjectAlternativeNameQualifier,
+    X509Certificate,
 )
-from octopoes.models.ooi.findings import KATFindingType, Finding
+from octopoes.models.ooi.findings import Finding, KATFindingType
 from octopoes.models.ooi.web import Website
 
 
@@ -26,15 +26,13 @@ def subject_valid_for_hostname(subject: str, hostname: str) -> bool:
 
 
 def hostname_in_qualifiers(hostname: str, qualifiers: List[str]) -> bool:
-    for qualifier in qualifiers:
-        if is_part_of_wildcard(hostname, qualifier):
-            return True
-    return False
+    return any(is_part_of_wildcard(hostname, qualifier) for qualifier in qualifiers)
 
 
 def run(
     input_ooi: X509Certificate,
     additional_oois: List[Union[Website, SubjectAlternativeNameHostname]],
+    config: Dict[str, str],
 ) -> Iterator[OOI]:
     subject = input_ooi.subject.rstrip(".")
 

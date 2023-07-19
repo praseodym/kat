@@ -1,7 +1,8 @@
 """Keiko settings module."""
 from pathlib import Path
+from typing import Optional
 
-from pydantic import BaseSettings, Field, DirectoryPath, FilePath
+from pydantic import BaseSettings, DirectoryPath, Field, FilePath
 
 
 class Settings(BaseSettings):
@@ -13,6 +14,8 @@ class Settings(BaseSettings):
     glossaries_folder: DirectoryPath = Field("glossaries", description="Folder containing the glossaries")
     assets_folder: DirectoryPath = Field("assets", description="Folder containing the assets")
     reports_folder: Path = Field("/reports", description="Output folder containing the reports")
+
+    span_export_grpc_endpoint: Optional[str] = Field(None, env="SPAN_EXPORT_GRPC_ENDPOINT")
 
     class Config:
         env_prefix = "KEIKO_"

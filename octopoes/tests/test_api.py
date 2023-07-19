@@ -3,23 +3,9 @@ import requests
 from fastapi.testclient import TestClient
 
 from octopoes.api.api import app
-from octopoes.api.router import settings
-from octopoes.config.settings import Settings, XTDBType
 from octopoes.version import __version__
 
-
 client = TestClient(app)
-
-
-def get_settings_override():
-    return Settings(xtdb_type=XTDBType.XTDB_MULTINODE)
-
-
-@pytest.fixture
-def xtdbtype_multinode():
-    app.dependency_overrides[settings] = get_settings_override
-    yield
-    app.dependency_overrides = {}
 
 
 @pytest.fixture
@@ -91,9 +77,9 @@ def test_get_scan_profiles(requests_mock, patch_pika):
     scan_profile = {
         "type": "ScanProfile",
         "level": 0,
-        "reference": "Hostname|internet|mispo.es.",
+        "reference": "Hostname|internet|mispo.es",
         "scan_profile_type": "empty",
-        "xt/id": "ScanProfile|DNSZone|internet|mispo.es.",
+        "xt/id": "ScanProfile|DNSZone|internet|mispo.es",
     }
     requests_mock.post(
         "http://crux:3000/_crux/query",
@@ -102,17 +88,19 @@ def test_get_scan_profiles(requests_mock, patch_pika):
     )
     response = client.get("/_dev/scan_profiles")
     assert response.status_code == 200
-    assert response.json() == [{"level": 0, "reference": "Hostname|internet|mispo.es.", "scan_profile_type": "empty"}]
+    assert response.json() == [{"level": 0, "reference": "Hostname|internet|mispo.es", "scan_profile_type": "empty"}]
 
 
 def test_create_node():
-    with pytest.raises(Exception, match="Creating nodes requires XTDB_MULTINODE"):
-        client.post("/_dev/node")
+    res = client.post("/_dev/node")
+    assert res.status_code == 501
+    assert res.json() == {"detail": "XTDB multinode is not set up for Octopoes."}
 
 
 def test_delete_node():
-    with pytest.raises(Exception, match="Deleting nodes requires XTDB_MULTINODE"):
-        client.delete("/_dev/node")
+    res = client.delete("/_dev/node")
+    assert res.status_code == 501
+    assert res.json() == {"detail": "XTDB multinode is not set up for Octopoes."}
 
 
 def test_create_node_multinode(requests_mock, xtdbtype_multinode):
@@ -135,3 +123,38 @@ def test_delete_node_multinode(requests_mock, xtdbtype_multinode):
     )
     response = client.delete("/_dev/node")
     assert response.status_code == 200
+
+
+def test_count_findings_by_severity(requests_mock, patch_pika):
+    requests_mock.real_http = True
+    xt_response = [
+        [
+            {
+                "object_type": "KATFindingType",
+                "KATFindingType/risk_severity": "medium",
+                "KATFindingType/id": "KAT-NO-DKIM",
+                "KATFindingType/description": "This hostname does not support a DKIM record.",
+                "KATFindingType/primary_key": "KATFindingType|KAT-NO-DKIM",
+                "KATFindingType/risk_score": 6.9,
+                "crux.db/id": "KATFindingType|KAT-NO-DKIM",
+            },
+            1,
+        ]
+    ]
+
+    requests_mock.post(
+        "http://crux:3000/_crux/query",
+        json=xt_response,
+        status_code=200,
+    )
+    response = client.get("/_dev/findings/count_by_severity")
+    assert response.status_code == 200
+    assert response.json() == {
+        "critical": 0,
+        "high": 0,
+        "medium": 1,
+        "low": 0,
+        "recommendation": 0,
+        "pending": 0,
+        "unknown": 0,
+    }

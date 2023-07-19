@@ -1,22 +1,27 @@
 import json
+import uuid
+from datetime import datetime
+from enum import Enum
 
+from account.mixins import OrganizationView
 from django.contrib import messages
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from django.views.generic.list import ListView
-from django_otp.decorators import otp_required
+from katalogus.views.mixins import BoefjeMixin, NormalizerMixin
 from requests import HTTPError
-from two_factor.views.utils import class_view_decorator
 
-from account.mixins import OrganizationView
 from rocky.scheduler import client
 
 TASK_LIMIT = 50
 
 
-@class_view_decorator(otp_required)
+class PageActions(Enum):
+    RESCHEDULE_TASK = "reschedule_task"
+
+
 class DownloadTaskDetail(OrganizationView):
     def get(self, request, *args, **kwargs):
         task_id = kwargs["task_id"]
@@ -39,41 +44,78 @@ class DownloadTaskDetail(OrganizationView):
         return redirect(reverse("task_list", kwargs={"organization_code": self.organization.code}))
 
 
-@class_view_decorator(otp_required)
 class TaskListView(OrganizationView, ListView):
     paginate_by = 20
 
-    def get(self, request, *args, **kwargs):
-        self.scheduler_id = None
-        if self.organization:
-            self.scheduler_id = self.plugin_type + "-" + self.organization.code
-        else:
-            error_message = _("Organization could not be found")
-            messages.add_message(request, messages.ERROR, error_message)
-        return super().get(request, *args, **kwargs)
-
     def get_queryset(self):
-        if not self.scheduler_id:
-            return []
+        scheduler_id = self.plugin_type + "-" + self.organization.code
+        task_type = self.request.GET.get("type", self.plugin_type)
 
-        scheduler_id = self.request.GET.get("scheduler_id", self.scheduler_id)
-        type_ = self.request.GET.get("type", self.plugin_type)
-        status = self.request.GET.get("status", None)
-        min_created_at = self.request.GET.get("min_created_at", None)
-        max_created_at = self.request.GET.get("max_created_at", None)
+        status = self.request.GET.get("scan_history_status") if self.request.GET.get("scan_history_status") else None
+
+        input_ooi = self.request.GET.get("scan_history_search") if self.request.GET.get("scan_history_search") else None
+
+        if self.request.GET.get("scan_history_from"):
+            min_created_at = datetime.strptime(self.request.GET.get("scan_history_from"), "%Y-%m-%d")
+        else:
+            min_created_at = None
+
+        if self.request.GET.get("scan_history_to"):
+            max_created_at = datetime.strptime(self.request.GET.get("scan_history_to"), "%Y-%m-%d")
+        else:
+            max_created_at = None
 
         try:
             return client.get_lazy_task_list(
                 scheduler_id=scheduler_id,
-                object_type=type_,
+                task_type=task_type,
                 status=status,
                 min_created_at=min_created_at,
                 max_created_at=max_created_at,
+                input_ooi=input_ooi,
             )
+
         except HTTPError:
             error_message = _("Fetching tasks failed: no connection with scheduler")
             messages.add_message(self.request, messages.ERROR, error_message)
             return []
+
+    def post(self, request, *args, **kwargs):
+        if "action" in self.request.POST:
+            self.handle_page_action(request.POST["action"])
+            if request.POST["action"] == PageActions.RESCHEDULE_TASK.value:
+                task_id = self.request.POST.get("task_id")
+                task = client.get_task_details(task_id)
+                if task.type == "normalizer":
+                    return redirect(
+                        reverse("normalizers_task_list", kwargs={"organization_code": self.organization.code})
+                    )
+                if task.type == "boefje":
+                    return redirect(reverse("boefjes_task_list", kwargs={"organization_code": self.organization.code}))
+
+                return redirect(reverse("task_list", kwargs={"organization_code": self.organization.code}))
+        return self.get(request, *args, **kwargs)
+
+    def handle_page_action(self, action: str):
+        if action == PageActions.RESCHEDULE_TASK.value:
+            task_id = self.request.POST.get("task_id")
+            task = client.get_task_details(task_id)
+
+            new_id = uuid.uuid4()
+
+            p_item = task.p_item
+            p_item.id = new_id
+            p_item.data.id = new_id
+
+            client.push_task(f"{task.type}-{self.organization.code}", task.p_item)
+
+            success_message = (
+                "Your task is scheduled and will soon be started in the background. \n "
+                "Results will be added to the object list when they are in. "
+                "It may take some time, a refresh of the page may be needed to show the results."
+            )
+            messages.add_message(self.request, messages.SUCCESS, success_message)
+            return
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -83,13 +125,11 @@ class TaskListView(OrganizationView, ListView):
         return context
 
 
-@class_view_decorator(otp_required)
-class BoefjesTaskListView(TaskListView):
+class BoefjesTaskListView(BoefjeMixin, TaskListView):
     template_name = "tasks/boefjes.html"
     plugin_type = "boefje"
 
 
-@class_view_decorator(otp_required)
-class NormalizersTaskListView(TaskListView):
+class NormalizersTaskListView(NormalizerMixin, TaskListView):
     template_name = "tasks/normalizers.html"
     plugin_type = "normalizer"

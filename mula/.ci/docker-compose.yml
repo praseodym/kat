@@ -1,33 +1,49 @@
 version: "3.9"
 
 services:
-  mula:
+  ci_scheduler_unit:
     build:
       context: .
       args:
         ENVIRONMENT: dev
-    env_file:
-      - .ci/.env.test
     volumes:
       - .:/app/scheduler
+    env_file:
+      - .ci/.env.test
+    depends_on:
+      ci_postgres:
+        condition: service_healthy
 
-  mula_integration:
+  ci_scheduler_integration:
     build:
       context: .
       args:
         ENVIRONMENT: dev
-    command: python -m unittest discover tests/integration
-    env_file:
-      - .ci/.env.test
     volumes:
       - .:/app/scheduler
+    env_file:
+      - .ci/.env.test
+    depends_on:
+      ci_postgres:
+        condition: service_healthy
+      ci_rabbitmq:
+        condition: service_healthy
 
-  mula_simulation:
-    build:
-      context: .
-      args:
-        ENVIRONMENT: dev
+  ci_postgres:
+    image: postgres:15
+    healthcheck:
+      test: ["CMD", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     env_file:
       - .ci/.env.test
+
+  ci_rabbitmq:
+    image: "rabbitmq:3.11-management"
     volumes:
-      - .:/app/scheduler
+      - ./.ci/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+    healthcheck:
+      test: [ "CMD", "rabbitmqctl", "status" ]
+      interval: 5s
+      retries: 4

@@ -1,11 +1,13 @@
 import json
 import logging.config
-import threading
+from pathlib import Path
 from types import SimpleNamespace
+
+from prometheus_client import CollectorRegistry, Gauge, Info
 
 import scheduler
 from scheduler.config import settings
-from scheduler.connectors import listeners, services
+from scheduler.connectors import services
 from scheduler.repositories import sqlalchemy, stores
 
 
@@ -19,8 +21,6 @@ class AppContext:
         services:
             A dict containing all the external services connectors that
             are used and need to be shared in the scheduler application.
-        stop_event: A threading.Event object used for communicating a stop
-            event across threads.
         datastore:
             A SQLAlchemy.SQLAlchemy object used for storing and retrieving
             tasks.
@@ -30,17 +30,15 @@ class AppContext:
         """Initializer of the AppContext class."""
         self.config: settings.Settings = settings.Settings()
 
-        if not self.config.database_dsn.startswith("postgresql"):
-            raise Exception("PostgreSQL is the only supported database backend")
-
         # Load logging configuration
-        with open(self.config.log_cfg, "rt", encoding="utf-8") as f:
+        with Path(self.config.log_cfg).open("rt", encoding="utf-8") as f:
             logging.config.dictConfig(json.load(f))
 
         # Services
         katalogus_service = services.Katalogus(
             host=self.config.host_katalogus,
             source=f"scheduler/{scheduler.__version__}",
+            cache_ttl=self.config.katalogus_cache_ttl,
         )
 
         bytes_service = services.Bytes(
@@ -54,19 +52,7 @@ class AppContext:
             host=self.config.host_octopoes,
             source=f"scheduler/{scheduler.__version__}",
             orgs=katalogus_service.get_organisations(),
-        )
-
-        # Listeners
-        mutations_listener = listeners.ScanProfileMutation(
-            dsn=self.config.host_mutation,
-        )
-
-        raw_data_listener = listeners.RawData(
-            dsn=self.config.host_raw_data,
-        )
-
-        normalizer_meta_listener = listeners.NormalizerMeta(
-            dsn=self.config.host_normalizer_meta,
+            timeout=self.config.octopoes_request_timeout,
         )
 
         # Register external services, SimpleNamespace allows us to use dot
@@ -76,15 +62,38 @@ class AppContext:
                 services.Katalogus.name: katalogus_service,
                 services.Octopoes.name: octopoes_service,
                 services.Bytes.name: bytes_service,
-                listeners.ScanProfileMutation.name: mutations_listener,
-                listeners.RawData.name: raw_data_listener,
-                listeners.NormalizerMeta.name: normalizer_meta_listener,
             }
         )
 
-        self.stop_event: threading.Event = threading.Event()
-
         # Repositories
+        if not self.config.database_dsn.startswith("postgresql"):
+            raise Exception("PostgreSQL is the only supported database backend")
+
         datastore = sqlalchemy.SQLAlchemy(self.config.database_dsn)
         self.task_store: stores.TaskStorer = sqlalchemy.TaskStore(datastore)
         self.pq_store: stores.PriorityQueueStorer = sqlalchemy.PriorityQueueStore(datastore)
+
+        # Metrics collector registry
+        self.metrics_registry: CollectorRegistry = CollectorRegistry()
+
+        Info(
+            name="app_settings",
+            documentation="Scheduler configuration settings",
+            registry=self.metrics_registry,
+        ).info(
+            {
+                "pq_maxsize": str(self.config.pq_maxsize),
+                "pq_populate_interval": str(self.config.pq_populate_interval),
+                "pq_populate_grace_period": str(self.config.pq_populate_grace_period),
+                "pq_populate_max_random_objects": str(self.config.pq_populate_max_random_objects),
+                "katalogus_cache_ttl": str(self.config.katalogus_cache_ttl),
+                "monitor_organisations_interval": str(self.config.monitor_organisations_interval),
+            }
+        )
+
+        self.metrics_qsize = Gauge(
+            name="scheduler_qsize",
+            documentation="Size of the scheduler queue",
+            registry=self.metrics_registry,
+            labelnames=["scheduler_id"],
+        )

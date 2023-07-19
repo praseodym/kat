@@ -7,7 +7,7 @@ from django.db.models import JSONField
 from django.forms import widgets
 
 from rocky.admin import AdminErrorMessageMixin
-from tools.models import Organization, OrganizationMember, Indemnification, OOIInformation, OrganizationTag
+from tools.models import Indemnification, OOIInformation, Organization, OrganizationMember, OrganizationTag
 
 
 class JSONInfoWidget(widgets.Textarea):
@@ -34,7 +34,7 @@ class OOIInformationAdmin(admin.ModelAdmin):
     # if pk is not readonly, it will create a new record upon editing
     def get_readonly_fields(self, request, obj=None):
         if obj is not None:  # editing an existing object
-            if obj.value == "":
+            if not obj.value:
                 return self.readonly_fields + (
                     "id",
                     "consult_api",
@@ -45,9 +45,6 @@ class OOIInformationAdmin(admin.ModelAdmin):
 
 class OrganizationAdmin(AdminErrorMessageMixin, admin.ModelAdmin):
     list_display = ["name", "code", "tags"]
-
-    def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
 
     def get_readonly_fields(self, request, obj=None):
         # Obj is None when adding an organization and in that case we don't make
@@ -63,9 +60,6 @@ class OrganizationAdmin(AdminErrorMessageMixin, admin.ModelAdmin):
 class OrganizationMemberAdmin(admin.ModelAdmin):
     list_display = ("user", "organization")
 
-    def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
-
 
 class IndemnificationAdmin(admin.ModelAdmin):
     list_display = ("organization", "user")
@@ -75,9 +69,6 @@ class IndemnificationAdmin(admin.ModelAdmin):
             return [f.name for f in self.model._meta.fields]
         else:
             return []
-
-    def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
 
 
 class OrganizationTagAdmin(admin.ModelAdmin):

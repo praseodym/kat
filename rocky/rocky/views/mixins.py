@@ -1,44 +1,53 @@
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Set, Type, List, Dict, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Type, Union
 
 import requests.exceptions
+from account.mixins import OrganizationView
+from django.contrib import messages
 from django.http import Http404
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
-from pydantic import BaseModel
-
-from account.mixins import OrganizationView
 from katalogus.client import Plugin, get_katalogus
-from octopoes.connector import ObjectNotFoundException
-from octopoes.connector.octopoes import OctopoesAPIConnector
-from octopoes.models import OOI, Reference, ScanLevel, ScanProfileType
-from octopoes.models.ooi.findings import Finding
-from octopoes.models.origin import Origin, OriginType
-from octopoes.models.tree import ReferenceTree
-from octopoes.models.types import get_relations, get_collapsed_types, type_by_name
-from rocky.bytes_client import get_bytes_client
+from pydantic import BaseModel
 from tools.forms.base import ObservedAtForm
-from tools.forms.settings import DEPTH_MAX, DEPTH_DEFAULT
+from tools.forms.settings import DEPTH_DEFAULT, DEPTH_MAX
 from tools.models import Organization
 from tools.ooi_helpers import (
     get_knowledge_base_data_for_ooi_store,
 )
 from tools.view_helpers import (
-    get_ooi_url,
     convert_date_to_datetime,
-    BreadcrumbsMixin,
-    Breadcrumb,
+    get_ooi_url,
 )
 
+from octopoes.connector import ObjectNotFoundException
+from octopoes.connector.octopoes import OctopoesAPIConnector
+from octopoes.models import OOI, Reference, ScanLevel, ScanProfileType
+from octopoes.models.explanation import InheritanceSection
+from octopoes.models.ooi.findings import Finding, FindingType, RiskLevelSeverity
+from octopoes.models.origin import Origin, OriginType
+from octopoes.models.tree import ReferenceTree
+from octopoes.models.types import get_collapsed_types, get_relations, type_by_name
+from rocky.bytes_client import get_bytes_client
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class HydratedFinding:
+    finding: Finding
+    ooi: OOI
+    finding_type: FindingType
 
 
 class OriginData(BaseModel):
     origin: Origin
     normalizer: Optional[dict]
     boefje: Optional[Plugin]
+    params: Optional[Dict[str, str]]
 
 
 class OOIAttributeError(AttributeError):
@@ -82,7 +91,7 @@ class OctopoesView(OrganizationView):
                     normalizer_data = client.get_normalizer_meta(origin.origin.task_id)
                     boefje_id = normalizer_data["boefje_meta"]["boefje"]["id"]
                     origin.normalizer = normalizer_data
-                    origin.boefje = get_katalogus(organization.code).get_boefje(boefje_id)
+                    origin.boefje = get_katalogus(organization.code).get_plugin(boefje_id)
                 except requests.exceptions.RequestException as e:
                     logger.error(e)
 
@@ -117,6 +126,9 @@ class OctopoesView(OrganizationView):
             return min(depth, DEPTH_MAX)
         except ValueError:
             return default_depth
+
+    def get_scan_profile_inheritance(self, ooi: OOI) -> List[InheritanceSection]:
+        return self.octopoes_api_connector.get_scan_profile_inheritance(ooi.reference)
 
 
 class OOIList:
@@ -172,6 +184,66 @@ class OOIList:
             ).items
 
 
+class FindingList:
+    HARD_LIMIT = 99_999_999
+
+    def __init__(
+        self,
+        octopoes_connector: OctopoesAPIConnector,
+        valid_time: datetime,
+        severities: Set[RiskLevelSeverity],
+        exclude_muted: bool = True,
+    ):
+        self.octopoes_connector = octopoes_connector
+        self.valid_time = valid_time
+        self.ordered = True
+        self._count = None
+        self.severities = severities
+        self.exclude_muted = exclude_muted
+
+    @cached_property
+    def count(self) -> int:
+        return self.octopoes_connector.list_findings(
+            severities=self.severities,
+            exclude_muted=self.exclude_muted,
+            valid_time=self.valid_time,
+            limit=0,
+        ).count
+
+    def __len__(self):
+        return self.count
+
+    def __getitem__(self, key: Union[int, slice]) -> List[HydratedFinding]:
+        if isinstance(key, slice):
+            offset = key.start or 0
+            limit = key.stop - offset
+            findings = self.octopoes_connector.list_findings(
+                severities=self.severities,
+                exclude_muted=self.exclude_muted,
+                valid_time=self.valid_time,
+                offset=offset,
+                limit=limit,
+            ).items
+            ooi_references = {finding.ooi for finding in findings}
+            finding_type_references = {finding.finding_type for finding in findings}
+            objects = self.octopoes_connector.load_objects_bulk(
+                ooi_references | finding_type_references, valid_time=self.valid_time
+            )
+
+            hydrated_findings = []
+            for finding in findings:
+                if finding.ooi not in objects or finding.finding_type not in objects:
+                    continue
+                hydrated_findings.append(
+                    HydratedFinding(
+                        finding=finding, finding_type=objects[finding.finding_type], ooi=objects[finding.ooi]
+                    )
+                )
+            return hydrated_findings
+
+        raise NotImplementedError("FindingList only supports slicing")
+
+
 class MultipleOOIMixin(OctopoesView):
     ooi_types: Set[Type[OOI]] = None
     ooi_type_filters: List = []
@@ -215,27 +287,6 @@ class MultipleOOIMixin(OctopoesView):
             return _("All")
 
         return ", ".join(self.filtered_ooi_types)
-
-
-class OOIBreadcrumbsMixin(BreadcrumbsMixin, OrganizationView):
-    def build_breadcrumbs(self) -> List[Breadcrumb]:
-        if isinstance(self.ooi, Finding):
-            start = {
-                "url": reverse("finding_list", kwargs={"organization_code": self.organization.code}),
-                "text": _("Findings"),
-            }
-        else:
-            start = {
-                "url": reverse("ooi_list", kwargs={"organization_code": self.organization.code}),
-                "text": _("Objects"),
-            }
-        return [
-            start,
-            {
-                "url": get_ooi_url("ooi_detail", self.ooi.primary_key, self.organization.code),
-                "text": self.ooi.human_readable,
-            },
-        ]
 
 
 class ConnectorFormMixin:
@@ -325,3 +376,15 @@ class SingleOOITreeMixin(SingleOOIMixin):
         self.tree = self.get_ooi_tree(pk, self.depth, observed_at)
 
         return self.tree.store[str(self.tree.root.reference)]
+
+
+class SeveritiesMixin:
+    def get_severities(self) -> Set[RiskLevelSeverity]:
+        severities = set()
+        for severity in self.request.GET.getlist("severity"):
+            try:
+                severities.add(RiskLevelSeverity(severity))
+            except ValueError as e:
+                messages.error(self.request, _(str(e)))
+
+        return severities

@@ -1,11 +1,11 @@
 from typing import Dict, List
 
-from boefjes.katalogus.models import Organisation, Repository, RESERVED_LOCAL_ID
+from boefjes.katalogus.models import RESERVED_LOCAL_ID, Organisation, Repository
 from boefjes.katalogus.storage.interfaces import (
     OrganisationStorage,
+    PluginEnabledStorage,
     RepositoryStorage,
     SettingsStorage,
-    PluginEnabledStorage,
 )
 
 # key = organisation id; value = organisation
@@ -61,29 +61,23 @@ class SettingsStorageMemory(SettingsStorage):
     def __init__(self):
         self._data = {}
 
-    def get_by_key(self, key: str, organisation_id: str, plugin_id: str) -> str:
-        return self._data[organisation_id][plugin_id][key]
-
     def get_all(self, organisation_id: str, plugin_id: str) -> Dict[str, str]:
         if organisation_id not in self._data:
             return {}
 
         return self._data[organisation_id].get(plugin_id, {})
 
-    def create(self, key: str, value, organisation_id: str, plugin_id: str) -> None:
+    def upsert(self, values: Dict, organisation_id: str, plugin_id: str) -> None:
         if organisation_id not in self._data:
             self._data[organisation_id] = {}
 
         if plugin_id not in self._data[organisation_id]:
             self._data[organisation_id][plugin_id] = {}
 
-        self._data[organisation_id][plugin_id][key] = value
+        self._data[organisation_id][plugin_id] = values
 
-    def update_by_key(self, key: str, value, organisation_id: str, plugin_id: str) -> None:
-        self._data[organisation_id][plugin_id][key] = value
-
-    def delete_by_key(self, key: str, organisation_id: str, plugin_id: str) -> None:
-        del self._data[organisation_id][plugin_id][key]
+    def delete(self, organisation_id: str, plugin_id: str) -> None:
+        del self._data[organisation_id][plugin_id]
 
 
 class PluginStatesStorageMemory(PluginEnabledStorage):
