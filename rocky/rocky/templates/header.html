@@ -1,7 +1,7 @@
 {% load static %}
 {% load i18n %}
 
-<header class="test">
+<header id="page-header">
     {% include "partials/skip-to-content.html" %}
 
     <nav data-open-label="{% translate "Menu" %}"
@@ -14,7 +14,7 @@
                class="logo"
                title="OpenKAT"
                aria-label="{% translate "OpenKAT logo, go to the homepage of OpenKAT" %}">
-                <img src="{% static 'img/kat_logo.png' %}" alt="{% translate "OpenKAT" %}"/>
+                <img src="{% static 'img/kat_logo.png' %}" alt="{% translate "OpenKAT" %}" />
                 Kwetsbaarheden Analyse Tool
             </a>
             {% if request.user.is_authenticated %}
@@ -49,6 +49,11 @@
                                 {% url "finding_list" organization.code as index_url %}
                                 <a href="{{ index_url }}"
                                    {% if index_url in request.path|urlencode %}aria-current="page"{% endif %}>{% translate "Findings" %}</a>
+                            </li>
+                            <li>
+                                {% url "reports" organization.code as index_url %}
+                                <a href="{{ index_url }}"
+                                   {% if index_url in request.path|urlencode %}aria-current="page"{% endif %}>{% translate "Reports" %}</a>
                             </li>
                             <li>
                                 {% url "ooi_list" organization.code as index_url %}

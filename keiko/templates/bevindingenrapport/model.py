@@ -1,60 +1,64 @@
 """
 DNS Report Datamodel
 """
-from datetime import datetime
-from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from keiko.base_models import DataShapeBase
 
 
 class OOI(BaseModel):
-    id: Optional[str]
-    ooi_type: Optional[str]
-    human_readable: Optional[str]
-    object_type: Optional[str]
+    id: str | None = None
+    ooi_type: str | None = None
+    human_readable: str | None = None
+    object_type: str | None = None
 
 
 class Finding(OOI):
-    proof: Optional[str]
-    description: Optional[str]
-    reproduce: Optional[str]
+    proof: str | None = None
+    description: str | None = None
+    reproduce: str | None = None
     ooi: str
 
 
 class FindingType(OOI):
     ooi_type: str
 
-    risk: Optional[str]
-    recommendation: Optional[str]
+    risk: str | None = None
+    recommendation: str | None = None
 
-    cvss: Optional[str]
-    source: Optional[str]
-    information_updated: Optional[str] = Field(None, alias="information updated")
+    cvss: str | None = None
+    source: str | None = None
+    information_updated: str | None = Field(None, alias="information updated")
 
-    risk_score: Optional[float]
+    risk_score: float | None = None
     risk_severity: str = "pending"
-    Information: Optional[str]
-    description: Optional[str]
+    Information: str | None = None
+    description: str | None = None
+
+    model_config = ConfigDict(coerce_numbers_to_str=True)
 
 
 class FindingOccurrence(BaseModel):
     finding_type: FindingType
-    list: List[Finding]
+    list: list[Finding]
 
 
 class Meta(BaseModel):
     total: int
-    total_by_severity: Dict[str, int]
-    total_by_finding_type: Dict[str, int]
+    total_by_severity: dict[str, int]
+    total_by_finding_type: dict[str, int]
     total_finding_types: int
-    total_by_severity_per_finding_type: Dict[str, int]
+    total_by_severity_per_finding_type: dict[str, int]
 
 
 class DataShape(DataShapeBase):
     meta: Meta
-    findings_grouped: Dict[str, FindingOccurrence]
+    findings_grouped: dict[str, FindingOccurrence]
     valid_time: datetime
     report_source_type: str
     report_source_value: str
+    filters: dict
+    report_url: str | None = None

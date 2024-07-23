@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Dict, Iterator, Set, Type, Union
-
-from pydantic.fields import ModelField
+from collections.abc import Iterator
 
 from octopoes.models import OOI, Reference
+from octopoes.models.exception import TypeNotFound
 from octopoes.models.ooi.certificate import (
     SubjectAlternativeNameHostname,
     SubjectAlternativeNameIP,
@@ -16,9 +15,11 @@ from octopoes.models.ooi.dns.records import (
     NXDOMAIN,
     DNSAAAARecord,
     DNSARecord,
+    DNSCAARecord,
     DNSCNAMERecord,
     DNSMXRecord,
     DNSNSRecord,
+    DNSPTRRecord,
     DNSSOARecord,
     DNSTXTRecord,
 )
@@ -39,6 +40,7 @@ from octopoes.models.ooi.findings import (
     CVEFindingType,
     CWEFindingType,
     Finding,
+    FindingType,
     KATFindingType,
     MutedFinding,
     RetireJSFindingType,
@@ -47,6 +49,7 @@ from octopoes.models.ooi.findings import (
 from octopoes.models.ooi.monitoring import Application, Incident
 from octopoes.models.ooi.network import (
     AutonomousSystem,
+    IPAddress,
     IPAddressV4,
     IPAddressV6,
     IPPort,
@@ -54,7 +57,9 @@ from octopoes.models.ooi.network import (
     IPV6NetBlock,
     Network,
 )
-from octopoes.models.ooi.service import IPService, Service
+from octopoes.models.ooi.question import Question
+from octopoes.models.ooi.reports import Report, ReportData
+from octopoes.models.ooi.service import IPService, Service, TLSCipher
 from octopoes.models.ooi.software import Software, SoftwareInstance
 from octopoes.models.ooi.web import (
     RESTAPI,
@@ -68,96 +73,97 @@ from octopoes.models.ooi.web import (
     HTTPResource,
     ImageMetadata,
     IPAddressHTTPURL,
+    SecurityTXT,
     Website,
 )
 
-CertificateType = Union[
-    X509Certificate,
-    SubjectAlternativeNameHostname,
-    SubjectAlternativeNameIP,
-    SubjectAlternativeNameQualifier,
-]
-DnsType = Union[DNSZone, Hostname]
-DnsRecordType = Union[
-    DNSARecord,
-    DNSAAAARecord,
-    DNSTXTRecord,
-    DNSMXRecord,
-    DNSNSRecord,
-    DNSSOARecord,
-    DNSCNAMERecord,
-    ResolvedHostname,
-    NXDOMAIN,
-]
-FindingTypeType = Union[
-    ADRFindingType,
-    KATFindingType,
-    CVEFindingType,
-    RetireJSFindingType,
-    CWEFindingType,
-    CAPECFindingType,
-    SnykFindingType,
-]
-NetworkType = Union[
-    Network,
-    IPAddressV4,
-    IPAddressV6,
-    AutonomousSystem,
-    IPV4NetBlock,
-    IPV6NetBlock,
-    IPPort,
-]
-ServiceType = Union[Service, IPService]
-SoftwareType = Union[Software, SoftwareInstance]
-WebType = Union[
-    Website,
-    URL,
-    HostnameHTTPURL,
-    IPAddressHTTPURL,
-    HTTPResource,
-    HTTPHeader,
-    HTTPHeaderURL,
-    HTTPHeaderHostname,
-    ImageMetadata,
-    RESTAPI,
-    APIDesignRule,
-    APIDesignRuleResult,
-]
-EmailSecurityType = Union[
-    DNSSPFRecord,
-    DNSSPFMechanismIP,
-    DNSSPFMechanismHostname,
-    DNSSPFMechanismNetBlock,
-    DMARCTXTRecord,
-    DKIMExists,
-    DKIMSelector,
-    DKIMKey,
-]
-MonitoringType = Union[Application, Incident]
-ConfigType = Union[Config]
+CertificateType = (
+    X509Certificate | SubjectAlternativeNameHostname | SubjectAlternativeNameIP | SubjectAlternativeNameQualifier
+)
+DnsType = DNSZone | Hostname
+DnsRecordType = (
+    DNSARecord
+    | DNSAAAARecord
+    | DNSTXTRecord
+    | DNSMXRecord
+    | DNSNSRecord
+    | DNSPTRRecord
+    | DNSSOARecord
+    | DNSCNAMERecord
+    | DNSCAARecord
+    | ResolvedHostname
+    | NXDOMAIN
+)
+ConcreteFindingTypeType = (
+    ADRFindingType
+    | KATFindingType
+    | CVEFindingType
+    | RetireJSFindingType
+    | CWEFindingType
+    | CAPECFindingType
+    | SnykFindingType
+)
+FindingTypeType = FindingType | ConcreteFindingTypeType
+ConcreteNetworkType = Network | IPAddressV4 | IPAddressV6 | AutonomousSystem | IPV4NetBlock | IPV6NetBlock | IPPort
+NetworkType = ConcreteNetworkType | IPAddress
+ServiceType = Service | IPService | TLSCipher
+SoftwareType = Software | SoftwareInstance
+WebType = (
+    Website
+    | URL
+    | HostnameHTTPURL
+    | IPAddressHTTPURL
+    | HTTPResource
+    | HTTPHeader
+    | HTTPHeaderURL
+    | HTTPHeaderHostname
+    | ImageMetadata
+    | RESTAPI
+    | APIDesignRule
+    | APIDesignRuleResult
+    | SecurityTXT
+)
+EmailSecurityType = (
+    DNSSPFRecord
+    | DNSSPFMechanismIP
+    | DNSSPFMechanismHostname
+    | DNSSPFMechanismNetBlock
+    | DMARCTXTRecord
+    | DKIMExists
+    | DKIMSelector
+    | DKIMKey
+)
+MonitoringType = Application | Incident
+ConfigType = Config
+ReportsType = ReportData
 
-OOIType = Union[
-    CertificateType,
-    DnsType,
-    DnsRecordType,
-    NetworkType,
-    ServiceType,
-    SoftwareType,
-    WebType,
-    DNSSPFMechanismIP,
-    DNSSPFMechanismHostname,
-    DNSSPFMechanismNetBlock,
-    DNSSPFRecord,
-    MonitoringType,
-    EmailSecurityType,
-    Finding,
-    MutedFinding,
-    FindingTypeType,
-    ConfigType,
-]
+ConcreteOOIType = (
+    CertificateType
+    | DnsType
+    | DnsRecordType
+    | ConcreteNetworkType
+    | ServiceType
+    | SoftwareType
+    | WebType
+    | DNSSPFMechanismIP
+    | DNSSPFMechanismHostname
+    | DNSSPFMechanismNetBlock
+    | DNSSPFRecord
+    | MonitoringType
+    | EmailSecurityType
+    | Finding
+    | MutedFinding
+    | ConcreteFindingTypeType
+    | ConfigType
+    | Question
+    | ReportsType
+    | Report
+)
+
+OOIType = ConcreteOOIType | NetworkType | FindingTypeType
 
 
-def get_all_types(cls_: Type[OOI]) -> Iterator[Type[OOI]]:
+def get_all_types(cls_: type[OOI]) -> Iterator[type[OOI]]:
     yield cls_
 
     for subclass in cls_.strict_subclasses():
@@ -167,18 +173,18 @@ def get_all_types(cls_: Type[OOI]) -> Iterator[Type[OOI]]:
 ALL_TYPES = set(get_all_types(OOI))
 
 
-def get_abstract_types() -> Set[Type[OOI]]:
+def get_abstract_types() -> set[type[OOI]]:
     return {t for t in ALL_TYPES if t.strict_subclasses()}
 
 
-def get_concrete_types() -> Set[Type[OOI]]:
+def get_concrete_types() -> set[type[OOI]]:
     return {t for t in ALL_TYPES if not t.strict_subclasses()}
 
 
-def get_collapsed_types() -> Set[Type[OOI]]:
+def get_collapsed_types() -> set[type[OOI]]:
     abstract_ooi_subtypes = get_abstract_types() - {OOI}
 
-    subclasses_of_abstract_ooi: Set[Type[OOI]] = set()
+    subclasses_of_abstract_ooi: set[type[OOI]] = set()
 
     for concrete_type in get_concrete_types():
         for abstract_type in abstract_ooi_subtypes:
@@ -190,7 +196,7 @@ def get_collapsed_types() -> Set[Type[OOI]]:
     return abstract_ooi_subtypes.union(non_abstracted_concrete_types)
 
 
-def to_concrete(object_types: Set[Type[OOI]]) -> Set[Type[OOI]]:
+def to_concrete(object_types: set[type[OOI]]) -> set[type[OOI]]:
     concrete_types = set()
     for object_type in object_types:
         if object_type in get_concrete_types():
@@ -202,23 +208,29 @@ def to_concrete(object_types: Set[Type[OOI]]) -> Set[Type[OOI]]:
 
 
 def type_by_name(type_name: str):
-    return next(t for t in ALL_TYPES if t.__name__ == type_name)
+    try:
+        return next(t for t in ALL_TYPES if t.__name__ == type_name)
+    except StopIteration:
+        raise TypeNotFound
 
 
-def related_object_type(field: ModelField) -> Type[OOI]:
-    object_type: Union[str, Type[OOI]] = field.field_info.extra["object_type"]
+def related_object_type(field) -> type[OOI]:
+    object_type: str | type[OOI] = field.json_schema_extra["object_type"]
     if isinstance(object_type, str):
         return type_by_name(object_type)
     return object_type
 
 
-def get_relations(object_type: Type[OOI]) -> Dict[str, Type[OOI]]:
+def get_relations(object_type: type[OOI]) -> dict[str, type[OOI]]:
     return {
-        name: related_object_type(field) for name, field in object_type.__fields__.items() if field.type_ == Reference
+        name: related_object_type(field)
+        for name, field in object_type.model_fields.items()
+        if field.annotation == Reference
+        or (hasattr(field.annotation, "__args__") and Reference in field.annotation.__args__)
     }
 
 
-def get_relation(object_type: Type[OOI], property_name: str) -> Type[OOI]:
+def get_relation(object_type: type[OOI], property_name: str) -> type[OOI]:
     return get_relations(object_type)[property_name]
 
 

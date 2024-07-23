@@ -1,18 +1,18 @@
+from collections.abc import Iterable
 from io import BytesIO
-from typing import Iterable, Union
 
 from PIL import Image, UnidentifiedImageError
 from PIL.ExifTags import TAGS
 
-from boefjes.job_models import NormalizerMeta
-from octopoes.models import OOI, Reference
+from boefjes.job_models import NormalizerOutput
+from octopoes.models import Reference
 from octopoes.models.ooi.findings import Finding, KATFindingType
 from octopoes.models.ooi.web import ImageMetadata
 
 
-def run(normalizer_meta: NormalizerMeta, raw: Union[bytes, str]) -> Iterable[OOI]:
+def run(input_ooi: dict, raw: bytes) -> Iterable[NormalizerOutput]:
     # fetch a reference to the original resource where these headers where downloaded from
-    resource = Reference.from_str(normalizer_meta.raw_data.boefje_meta.input_ooi)
+    resource = Reference.from_str(input_ooi["primary_key"])
     image = Image.open(BytesIO(raw))
     image.MAX_IMAGE_PIXELS = 7680 * 4320  # 8K pixels for now
 

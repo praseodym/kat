@@ -1,5 +1,3 @@
-from typing import Dict
-
 from django import forms
 from django.utils.translation import gettext_lazy as _
 from jsonschema.validators import Draft202012Validator
@@ -15,7 +13,7 @@ class PluginSchemaForm(forms.Form):
         "required": _("This field is required."),
     }
 
-    def __init__(self, plugin_schema: Dict, values: Dict, *args, **kwargs):
+    def __init__(self, plugin_schema: dict, values: dict, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.plugin_schema = plugin_schema
         self.values = values
@@ -24,7 +22,7 @@ class PluginSchemaForm(forms.Form):
     def populate_fields(self):
         for field_name, field_props in self.plugin_schema["properties"].items():
             kwargs = {
-                "required": field_name in self.plugin_schema["required"],
+                "required": "required" in self.plugin_schema and field_name in self.plugin_schema["required"],
                 "label": field_props.get("title", field_name),
                 "help_text": _(field_props.get("description", "")),
                 "error_messages": self.error_messages,
@@ -45,7 +43,9 @@ class PluginSchemaForm(forms.Form):
 
         # The form assigns "" and in some scenario's null to all unfilled (optional) fields
         cleaned_data = {
-            key: value for key, value in cleaned_data.items() if value is not None and value != ""  # noqa: PLC1901
+            key: value
+            for key, value in cleaned_data.items()
+            if value is not None and value != ""  # noqa: PLC1901
         }
 
         validator = Draft202012Validator(self.plugin_schema)

@@ -1,13 +1,14 @@
 import uuid
 from datetime import date, datetime, timezone
-from typing import List, TypedDict
+from typing import TypedDict
 from urllib.parse import urlencode, urlparse, urlunparse
 
-from account.mixins import OrganizationView
+from django.http import HttpRequest
 from django.urls.base import reverse, reverse_lazy
 from django.utils.translation import gettext_lazy as _
 
 from octopoes.models.types import OOI_TYPES
+from tools.models import Organization
 
 
 def convert_date_to_datetime(d: date) -> datetime:
@@ -15,17 +16,18 @@ def convert_date_to_datetime(d: date) -> datetime:
     return datetime.combine(d, datetime.max.time(), tzinfo=timezone.utc)
 
 
-def get_mandatory_fields(request):
+def get_mandatory_fields(request, params: list[str] | None = None):
     mandatory_fields = []
 
-    params = ["observed_at", "depth", "view"]
+    if not params:
+        params = ["observed_at", "depth", "view"]
+
+        for type_ in request.GET.getlist("ooi_type", []):
+            mandatory_fields.append(("ooi_type", type_))
 
     for param in params:
         if param in request.GET:
             mandatory_fields.append((param, request.GET.get(param)))
-
-    for type_ in request.GET.getlist("ooi_type", []):
-        mandatory_fields.append(("ooi_type", type_))
 
     return mandatory_fields
 
@@ -34,7 +36,7 @@ def generate_job_id():
     return str(uuid.uuid4())
 
 
-def url_with_querystring(path, **kwargs) -> str:
+def url_with_querystring(path, doseq=False, **kwargs) -> str:
     parsed_route = urlparse(path)
 
     return str(
@@ -44,7 +46,7 @@ def url_with_querystring(path, **kwargs) -> str:
                 parsed_route.netloc,
                 parsed_route.path,
                 parsed_route.params,
-                urlencode(kwargs),
+                urlencode(kwargs, doseq),
                 parsed_route.fragment,
             )
         )
@@ -52,7 +54,8 @@ def url_with_querystring(path, **kwargs) -> str:
 
 
 def get_ooi_url(routename: str, ooi_id: str, organization_code: str, **kwargs) -> str:
-    kwargs["ooi_id"] = ooi_id
+    if ooi_id:
+        kwargs["ooi_id"] = ooi_id
 
     if "query" in kwargs:
         kwargs["query"] = {key: value for key, value in kwargs["query"] if key not in kwargs}
@@ -76,13 +79,14 @@ class Breadcrumb(TypedDict):
 
 
 class BreadcrumbsMixin:
-    breadcrumbs: List[Breadcrumb] = []
+    breadcrumbs: list[Breadcrumb] = []
 
-    def build_breadcrumbs(self) -> List[Breadcrumb]:
+    def build_breadcrumbs(self) -> list[Breadcrumb]:
         return self.breadcrumbs.copy()
 
     def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
+        # Mypy doesn't understand the way mixins are used
+        context = super().get_context_data(**kwargs)  # type: ignore[misc]
         context["breadcrumbs"] = self.build_breadcrumbs()
         return context
 
@@ -93,8 +97,9 @@ class Step(TypedDict):
 
 
 class StepsMixin:
-    steps: List[Step] = []
-    current_step: int = None
+    request: HttpRequest
+    steps: list[Step] = []
+    current_step: int | None = None
 
     def get_current_step(self):
         if self.current_step is None:
@@ -104,11 +109,12 @@ class StepsMixin:
     def set_current_stepper_url(self, url):
         self.steps[self.get_current_step() - 1]["url"] = url
 
-    def build_steps(self) -> List[Step]:
+    def build_steps(self) -> list[Step]:
         return self.steps.copy()
 
     def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
+        # Mypy doesn't understand the way mixins are used
+        context = super().get_context_data(**kwargs)  # type: ignore[misc]
         context["steps"] = self.build_steps()
         context["current_step"] = self.get_current_step()
 
@@ -119,31 +125,37 @@ class OrganizationBreadcrumbsMixin(BreadcrumbsMixin):
     breadcrumbs = [{"url": reverse_lazy("organization_list"), "text": _("Organizations")}]
 
 
-class OrganizationDetailBreadcrumbsMixin(BreadcrumbsMixin, OrganizationView):
+class OrganizationDetailBreadcrumbsMixin(BreadcrumbsMixin):
+    organization: Organization
+
     def build_breadcrumbs(self):
         breadcrumbs = [
             {
                 "url": reverse("organization_settings", kwargs={"organization_code": self.organization.code}),
-                "text": "Settings",
+                "text": _("Settings"),
             },
         ]
 
         return breadcrumbs
 
 
-class OrganizationMemberBreadcrumbsMixin(BreadcrumbsMixin, OrganizationView):
+class OrganizationMemberBreadcrumbsMixin(BreadcrumbsMixin):
+    organization: Organization
+
     def build_breadcrumbs(self):
         breadcrumbs = [
             {
                 "url": reverse("organization_member_list", kwargs={"organization_code": self.organization.code}),
-                "text": "Members",
+                "text": _("Members"),
             },
         ]
 
         return breadcrumbs
 
 
-class ObjectsBreadcrumbsMixin(BreadcrumbsMixin, OrganizationView):
+class ObjectsBreadcrumbsMixin(BreadcrumbsMixin):
+    organization: Organization
+
     def build_breadcrumbs(self):
         return [
             {

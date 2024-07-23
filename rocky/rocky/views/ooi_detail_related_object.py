@@ -1,14 +1,10 @@
 from collections import Counter
-from typing import Dict, List, Optional, Set, Tuple, Type
 
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
-from django.views.generic import TemplateView
-from tools.ooi_helpers import (
-    format_attr_name,
-)
-from tools.view_helpers import existing_ooi_type, url_with_querystring
+from tools.ooi_helpers import format_attr_name
+from tools.view_helpers import existing_ooi_type, get_mandatory_fields, url_with_querystring
 
 from octopoes.models import OOI
 from octopoes.models.ooi.findings import Finding, FindingType, RiskLevelSeverity
@@ -17,7 +13,7 @@ from rocky.views.ooi_view import SingleOOITreeMixin
 
 
 class OOIRelatedObjectManager(SingleOOITreeMixin):
-    def get_related_objects(self):
+    def get_related_objects(self, observed_at):
         related = []
         for relation_name, children in self.tree.root.children.items():
             for child in children:
@@ -25,13 +21,17 @@ class OOIRelatedObjectManager(SingleOOITreeMixin):
                     continue
                 rel_name = format_attr_name(relation_name)
                 if rel_name.lower() != "findings":
-                    rel = {"name": rel_name, "reference": child.reference}
+                    rel = {
+                        "name": rel_name,
+                        "reference": child.reference,
+                        "mandatory_fields": get_mandatory_fields(self.request, params=["observed_at"]),
+                    }
                     related.append(rel)
         return related
 
 
 class OOIFindingManager(SingleOOITreeMixin):
-    def get_findings(self) -> List[Finding]:
+    def get_findings(self) -> list[Finding]:
         findings = []
         for relation in self.tree.root.children.values():
             for child in relation:
@@ -43,22 +43,22 @@ class OOIFindingManager(SingleOOITreeMixin):
     def count_findings_per_severity(self) -> Counter:
         counter = Counter({severity: 0 for severity in RiskLevelSeverity})
         for finding in self.get_findings():
-            finding_type: Optional[FindingType] = self.tree.store.get(str(finding.finding_type), None)
-            if finding_type is not None:
+            finding_type: FindingType | None = self.tree.store.get(str(finding.finding_type), None)
+            if finding_type is not None and finding_type.risk_severity is not None:
                 counter.update([finding_type.risk_severity])
             else:
                 counter.update([RiskLevelSeverity.UNKNOWN])
         return counter
 
-    def get_finding_details_sorted_by_score_desc(self) -> List[Tuple[Finding, FindingType]]:
+    def get_finding_details_sorted_by_score_desc(self) -> list[tuple[Finding, FindingType]]:
         finding_details = self.get_finding_details()
-        return list(sorted(finding_details, key=lambda x: x[1].risk_score, reverse=True))
+        return list(sorted(finding_details, key=lambda x: x[1].risk_score or 0, reverse=True))
 
-    def get_finding_details(self) -> List[Tuple[Finding, FindingType]]:
+    def get_finding_details(self) -> list[tuple[Finding, FindingType]]:
         return [(finding, self.tree.store[str(finding.finding_type)]) for finding in self.get_findings()]
 
 
-class OOIRelatedObjectAddView(OOIRelatedObjectManager, TemplateView):
+class OOIRelatedObjectAddView(OOIRelatedObjectManager):
     template_name = "oois/ooi_detail_add_related_object.html"
 
     def get(self, request, *args, **kwargs):
@@ -77,7 +77,7 @@ class OOIRelatedObjectAddView(OOIRelatedObjectManager, TemplateView):
 
         return super().get(request, *args, **kwargs)
 
-    def split_ooi_type_choice(self, ooi_type_choice) -> Dict[str, str]:
+    def split_ooi_type_choice(self, ooi_type_choice) -> dict[str, str]:
         ooi_type = ooi_type_choice.split("|", 1)
 
         return {
@@ -102,7 +102,7 @@ class OOIRelatedObjectAddView(OOIRelatedObjectManager, TemplateView):
 
         return url_with_querystring(path, **query_params)
 
-    def get_datamodel(self) -> Dict[str, Dict[str, Set[Type[OOI]]]]:
+    def get_datamodel(self) -> dict[str, dict[str, set[type[OOI]]]]:
         datamodel = {}
         for ooi_name, ooi_ in OOI_TYPES.items():
             datamodel[ooi_name] = {
@@ -110,7 +110,7 @@ class OOIRelatedObjectAddView(OOIRelatedObjectManager, TemplateView):
             }
         return datamodel
 
-    def get_foreign_relations(self, ooi_class: Type[OOI]) -> List[Tuple[str, str]]:
+    def get_foreign_relations(self, ooi_class: type[OOI]) -> list[tuple[str, str]]:
         datamodel = self.get_datamodel()
 
         ret = []
@@ -120,9 +120,9 @@ class OOIRelatedObjectAddView(OOIRelatedObjectManager, TemplateView):
                     ret.append((foreign_ooi_class_name, attr_name))
         return ret
 
-    def get_ooi_types_input_values(self, ooi: OOI) -> List[Dict[str, str]]:
+    def get_ooi_types_input_values(self, ooi: OOI) -> list[dict[str, str]]:
         # to populate the "add object" dropdown with related OOI's
-        if isinstance(ooi, (Finding, FindingType)):
+        if isinstance(ooi, Finding | FindingType):
             return []
 
         foreign_relations = self.get_foreign_relations(ooi.__class__)

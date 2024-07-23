@@ -1,15 +1,13 @@
-import logging
-from typing import Any, List, Optional, Union
+from typing import Any
 
 import prometheus_client
-from fastapi import APIRouter, Depends
+import structlog
+from fastapi import APIRouter, Depends, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import RedirectResponse, Response
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, ValidationError
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY
+from pydantic import BaseModel, Field, ValidationError
 
 from bytes.api.metrics import get_registry
 from bytes.auth import TokenResponse, authenticate_token, get_access_token
@@ -18,34 +16,37 @@ from bytes.repositories.meta_repository import MetaDataRepository
 from bytes.version import __version__
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class ServiceHealth(BaseModel):
     service: str
     healthy: bool = False
-    version: Optional[str] = None
+    version: str | None = None
     additional: Any = None
-    results: List["ServiceHealth"] = []
+    results: list["ServiceHealth"] = Field(default_factory=list)
 
 
 ServiceHealth.update_forward_refs()
 
 
-def validation_exception_handler(_: Request, exc: Union[RequestValidationError, ValidationError]) -> JSONResponse:
-    logger.info(exc.json())
-    logger.debug(exc.__traceback__)
-
-    return JSONResponse({"errors": exc.errors()}, status_code=HTTP_422_UNPROCESSABLE_ENTITY)
+def validation_exception_handler(_: Request, exc: RequestValidationError | ValidationError) -> JSONResponse:
+    logger.critical(exc)
+    return JSONResponse(
+        {
+            "value": str(exc),
+        },
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
 
 
 @router.get("/", include_in_schema=False)
-def health() -> RedirectResponse:
+def root() -> RedirectResponse:
     return RedirectResponse(url="/health")
 
 
 @router.get("/health", response_model=ServiceHealth)
-def root() -> ServiceHealth:
+def health() -> ServiceHealth:
     bytes_health = ServiceHealth(service="bytes", healthy=True, version=__version__)
     return bytes_health
 

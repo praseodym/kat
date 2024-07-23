@@ -1,10 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
-from pydantic import parse_obj_as
+from pydantic import TypeAdapter
 
 from octopoes.api.models import Declaration
 from octopoes.connector.octopoes import OctopoesAPIConnector
@@ -40,11 +40,14 @@ def format_value(value: Any) -> str:
     return value
 
 
-def format_display(data: Dict) -> Dict[str, str]:
-    return {format_attr_name(k): format_value(v) for k, v in data.items()}
+def format_display(data: dict, ignore: list | None = None) -> dict[str, str]:
+    if ignore is None:
+        ignore = []
+
+    return {format_attr_name(k): format_value(v) for k, v in data.items() if k not in ignore}
 
 
-def get_knowledge_base_data_for_ooi_store(ooi_store) -> Dict[str, Dict]:
+def get_knowledge_base_data_for_ooi_store(ooi_store) -> dict[str, dict]:
     knowledge_base = {}
 
     for ooi in ooi_store.values():
@@ -55,7 +58,7 @@ def get_knowledge_base_data_for_ooi_store(ooi_store) -> Dict[str, Dict]:
     return knowledge_base
 
 
-def get_knowledge_base_data_for_ooi(ooi: OOI) -> Dict:
+def get_knowledge_base_data_for_ooi(ooi: OOI) -> dict:
     knowledge_base_data = {}
 
     # Knowledge base data
@@ -77,12 +80,12 @@ def get_knowledge_base_data_for_ooi(ooi: OOI) -> Dict:
 def process_value(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return value
     return str(value) if value else None
 
 
-def get_ooi_dict(ooi: OOI) -> Dict:
+def get_ooi_dict(ooi: OOI) -> dict:
     ooi_dict = {
         "id": ooi.primary_key,
         "ooi_type": ooi.get_ooi_type(),
@@ -100,8 +103,8 @@ def get_ooi_dict(ooi: OOI) -> Dict:
     return ooi_dict
 
 
-def get_tree_meta(tree_node: Dict, depth: int, location: str) -> Dict:
-    tree_meta = {
+def get_tree_meta(tree_node: dict, depth: int, location: str) -> dict:
+    tree_meta: dict[str, Any] = {
         "depth": depth,
         "location": location,
         "child_count": "0",  # TO_DO ? child_count doesn't exist in template if not a string
@@ -125,12 +128,12 @@ def get_tree_meta(tree_node: Dict, depth: int, location: str) -> Dict:
 
 def create_object_tree_item_from_ref(
     reference_node: ReferenceNode,
-    ooi_store: Dict[str, OOI],
-    knowledge_base: Optional[Dict[str, Dict]] = None,
+    ooi_store: dict[str, OOI],
+    knowledge_base: dict[str, dict] | None = None,
     depth=0,
     position=1,
     location="loc",
-) -> Dict:
+) -> dict:
     depth = sum([depth, 1])
     location = location + "-" + str(position)
 
@@ -178,7 +181,7 @@ def get_ooi_types_from_tree(ooi, include_self=True):
     return sorted(types)
 
 
-def filter_ooi_tree(ooi_node: Dict, show_types=[], hide_types=[]) -> Dict:
+def filter_ooi_tree(ooi_node: dict, show_types=[], hide_types=[]) -> dict:
     if not show_types and not hide_types:
         return ooi_node
 
@@ -219,19 +222,13 @@ def filter_ooi_tree_item(ooi_node, show_types, hide_types, self_excluded_from_fi
 
 
 def get_finding_type_from_finding(finding: Finding) -> FindingType:
-    return parse_obj_as(
-        Union[
-            KATFindingType,
-            CVEFindingType,
-            CWEFindingType,
-            RetireJSFindingType,
-            SnykFindingType,
-            CAPECFindingType,
-        ],
+    return TypeAdapter(
+        KATFindingType | CVEFindingType | CWEFindingType | RetireJSFindingType | SnykFindingType | CAPECFindingType
+    ).validate_python(
         {
             "object_type": finding.finding_type.class_,
             "id": finding.finding_type.natural_key,
-        },
+        }
     )
 
 
@@ -240,29 +237,16 @@ OOI_TYPES_WITHOUT_FINDINGS = [name for name, cls_ in OOI_TYPES.items() if cls_ n
 
 
 def get_or_create_ooi(
-    api_connector: OctopoesAPIConnector, bytes_client: BytesClient, ooi: OOI, observed_at: datetime = None
-) -> Tuple[OOI, Union[bool, datetime]]:
-    _now = datetime.now(timezone.utc)
-    if observed_at is None:
-        observed_at = _now
-
+    api_connector: OctopoesAPIConnector, bytes_client: BytesClient, ooi: OOI, observed_at: datetime
+) -> tuple[OOI, bool]:
     try:
         return api_connector.get(ooi.reference, observed_at), False
     except ObjectNotFoundException:
-        if observed_at < _now:
-            # don't create an OOI when expected valid_time is in the past
-            raise ValueError(f"OOI not found and unable to create at {observed_at}")
-
         create_ooi(api_connector, bytes_client, ooi, observed_at)
-        return ooi, datetime.now(timezone.utc)
+        return ooi, True
 
 
-def create_ooi(
-    api_connector: OctopoesAPIConnector, bytes_client: BytesClient, ooi: OOI, observed_at: datetime = None
-) -> None:
-    if observed_at is None:
-        observed_at = datetime.now(timezone.utc)
-
+def create_ooi(api_connector: OctopoesAPIConnector, bytes_client: BytesClient, ooi: OOI, observed_at: datetime) -> None:
     task_id = uuid4()
     declaration = Declaration(ooi=ooi, valid_time=observed_at, task_id=str(task_id))
     bytes_client.add_manual_proof(task_id, BytesClient.raw_from_declarations([declaration]))

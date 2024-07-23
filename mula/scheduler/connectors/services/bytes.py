@@ -1,11 +1,12 @@
+import threading
 import typing
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
-import requests
-from requests.models import HTTPError
+import httpx
 
-from scheduler.connectors.errors import exception_handler
+from scheduler.connectors.errors import ExternalServiceResponseError, exception_handler
 from scheduler.models import BoefjeMeta
 
 from .services import HTTPService
@@ -15,43 +16,66 @@ ClientSessionMethod = Callable[..., Any]
 
 def retry_with_login(function: ClientSessionMethod) -> ClientSessionMethod:
     @wraps(function)
-    def wrapper(self, *args, **kwargs):  # type: ignore
+    def wrapper(self, *args, **kwargs):
         try:
             return function(self, *args, **kwargs)
-        except HTTPError as error:
-            if error.response.status_code != 401:
-                raise error from HTTPError
+        except (httpx.HTTPStatusError, ExternalServiceResponseError) as exc:
+            if exc.response.status_code != 401:
+                raise
 
             self.login()
             return function(self, *args, **kwargs)
+        except Exception as exc:
+            raise exc
 
     return typing.cast(ClientSessionMethod, wrapper)
 
 
 class Bytes(HTTPService):
+    """A class that provides methods to interact with the Bytes API."""
+
     name = "bytes"
 
-    def __init__(self, host: str, source: str, user: str, password: str, timeout: int = 5):
-        self.credentials: Dict[str, str] = {
+    def __init__(
+        self,
+        host: str,
+        source: str,
+        user: str,
+        password: str,
+        timeout: int,
+        pool_connections: int,
+    ):
+        """Initialize the Bytes service.
+
+        Args:
+            host: A string representing the host.
+            source: A string representing the source.
+            user: A string representing the username.
+            password: A string representing the password.
+            timeout: An integer representing the timeout.
+        """
+        self.credentials: dict[str, str] = {
             "username": user,
             "password": password,
         }
 
-        super().__init__(host=host, source=source, timeout=timeout)
+        self.lock: threading.Lock = threading.Lock()
+
+        super().__init__(host, source, timeout, pool_connections)
 
     def login(self) -> None:
-        self.headers.update({"Authorization": f"bearer {self._get_token()}"})
+        with self.lock:
+            self.headers.update({"Authorization": f"bearer {self.get_token()}"})
 
     @staticmethod
-    def _verify_response(response: requests.Response) -> None:
+    def _verify_response(response: httpx.Response) -> None:
         response.raise_for_status()
 
-    def _get_token(self) -> str:
+    def get_token(self) -> str:
         url = f"{self.host}/token"
         response = self.post(
             url=url,
             payload=self.credentials,
-            headers={"Content-Type": "application/x-www-form-urlendcoded"},
         )
 
         self._verify_response(response)
@@ -60,7 +84,7 @@ class Bytes(HTTPService):
 
     @retry_with_login
     @exception_handler
-    def get_last_run_boefje(self, boefje_id: str, input_ooi: str, organization_id: str) -> Optional[BoefjeMeta]:
+    def get_last_run_boefje(self, boefje_id: str, input_ooi: str, organization_id: str) -> BoefjeMeta | None:
         url = f"{self.host}/bytes/boefje_meta"
         response = self.get(
             url=url,
@@ -82,7 +106,7 @@ class Bytes(HTTPService):
 
     @retry_with_login
     @exception_handler
-    def get_last_run_boefje_by_organisation_id(self, organization_id: str) -> Optional[BoefjeMeta]:
+    def get_last_run_boefje_by_organisation_id(self, organization_id: str) -> BoefjeMeta | None:
         url = f"{self.host}/bytes/boefje_meta"
         response = self.get(
             url=url,

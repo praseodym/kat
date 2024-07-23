@@ -1,10 +1,10 @@
 import json
-from typing import Any, List, Set, Type
+from typing import Any
 from urllib import parse
 
 from django import template
 
-from octopoes.models import OOI
+from octopoes.models import OOI, Reference, ScanLevel
 from octopoes.models.ooi.findings import Finding, FindingType
 from tools.view_helpers import get_ooi_url
 
@@ -21,13 +21,23 @@ def get_item(dictionary, key):
     return dictionary.get(key)
 
 
+@register.filter
+def get_key(array, key):
+    return [x[key] for x in array]
+
+
+@register.filter
+def sum_list(array):
+    return sum(array)
+
+
 @register.simple_tag()
-def get_scan_levels() -> List[str]:
+def get_scan_levels() -> list[str]:
     return list(map(str, range(1, 5)))
 
 
 @register.filter
-def ooi_types_to_strings(ooi_types: Set[Type[OOI]]):
+def ooi_types_to_strings(ooi_types: set[type[OOI]]):
     return [ooi_type.get_ooi_type() for ooi_type in ooi_types]
 
 
@@ -71,3 +81,21 @@ def index(indexable, i):
 @register.filter
 def pretty_json(obj: dict):
     return json.dumps(obj, default=str, indent=4)
+
+
+@register.filter
+def human_readable(reference_string: str) -> str:
+    return Reference.from_str(reference_string).human_readable
+
+
+@register.filter
+def clearance_level(ooi: OOI) -> ScanLevel:
+    if ooi.scan_profile:
+        return ooi.scan_profile.level
+    else:
+        return ScanLevel.L0
+
+
+@register.filter
+def ooi_type(reference_string: str) -> str:
+    return Reference.from_str(reference_string).class_

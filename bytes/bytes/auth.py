@@ -1,17 +1,17 @@
-import logging
 from datetime import datetime, timedelta, timezone
-from typing import Tuple
 
+import jwt
+import structlog
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import JWTError, jwt
+from jwt import InvalidTokenError
 from passlib.context import CryptContext
 from pydantic import BaseModel
 from starlette import status
 
 from bytes.config import get_settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -24,10 +24,10 @@ class TokenResponse(BaseModel):
     expires_at: str
 
 
-def get_access_token(form_data: OAuth2PasswordRequestForm) -> Tuple[str, datetime]:
+def get_access_token(form_data: OAuth2PasswordRequestForm) -> tuple[str, datetime]:
     settings = get_settings()
-    system_username = settings.bytes_username
-    hashed_password = pwd_context.hash(settings.bytes_password)
+    system_username = settings.username
+    hashed_password = pwd_context.hash(settings.password)
 
     authenticated = form_data.username == system_username and pwd_context.verify(form_data.password, hashed_password)
 
@@ -57,13 +57,13 @@ def authenticate_token(token: str = Depends(oauth2_scheme)) -> str:
             raise credentials_exception
 
         return str(username)
-    except JWTError as error:
+    except InvalidTokenError as error:
         raise credentials_exception from error
 
 
 def _create_access_token(
     form_data: OAuth2PasswordRequestForm, secret: str, access_token_expire_minutes: float
-) -> Tuple[str, datetime]:
+) -> tuple[str, datetime]:
     expire_time = _get_expire_time(access_token_expire_minutes)
     data = {
         "sub": form_data.username,

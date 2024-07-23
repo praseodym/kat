@@ -22,11 +22,11 @@
     <h1>{{ item.name }}</h1>
     <p>{{ item.description }}</p>
     <span class="de-emphasized">
-        {% translate "Publisher" %}:
+        {% translate "Publisher:" %}
         OpenKAT
     </span>
     <div class="action-buttons">
-        <a href="{% url "plugin_detail" organization_code=organization.code plugin_type="boefje" plugin_id=item.id %}">{% translate "See details" %}</a>
+        <a href="{% url "boefje_detail" organization_code=organization.code plugin_id=item.id %}">{% translate "See details" %}</a>
         {% if not widget %}{{ item }}{% endif %}
     </div>
 </div>

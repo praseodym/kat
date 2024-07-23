@@ -1,9 +1,9 @@
 import uuid
 
+import httpx
 import pytest
-import requests
+from httpx import HTTPError
 from prometheus_client.parser import text_string_to_metric_families
-from requests import HTTPError
 
 from bytes.models import MimeType
 from bytes.rabbitmq import RabbitMQEventManager
@@ -14,8 +14,8 @@ from tests.loading import get_boefje_meta, get_normalizer_meta, get_raw_data
 
 def test_login(bytes_api_client: BytesAPIClient) -> None:
     bytes_api_client.login()
-    assert "Authorization" in bytes_api_client.headers
-    assert "bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" in bytes_api_client.headers["Authorization"]
+    assert "Authorization" in bytes_api_client.client.headers
+    assert "bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" in bytes_api_client.client.headers["Authorization"]
 
 
 def test_metrics(bytes_api_client: BytesAPIClient) -> None:
@@ -69,6 +69,28 @@ def test_metrics(bytes_api_client: BytesAPIClient) -> None:
     assert database_files.samples[1].value == 1.0
 
 
+def test_get_mime_type_count(bytes_api_client: BytesAPIClient) -> None:
+    boefje_meta = get_boefje_meta()
+    bytes_api_client.save_boefje_meta(boefje_meta)
+
+    bytes_api_client.save_raw(boefje_meta.id, b"test 123", ["boefje"])
+    raw_id = bytes_api_client.save_raw(boefje_meta.id, b"test 12334", ["text/boefje", "boefje"])
+
+    normalizer_meta = get_normalizer_meta(raw_id)
+    bytes_api_client.save_normalizer_meta(normalizer_meta)
+
+    assert bytes_api_client.get_mime_type_count(RawDataFilter(organization="test")) == {
+        "boefje": 2,
+        "text/boefje": 1,
+    }
+
+    assert bytes_api_client.get_mime_type_count(RawDataFilter(organization="test", normalized=True)) == {
+        "boefje": 1,
+        "text/boefje": 1,
+    }
+    assert bytes_api_client.get_mime_type_count(RawDataFilter(organization="test", normalized=False)) == {"boefje": 1}
+
+
 def test_boefje_meta(bytes_api_client: BytesAPIClient) -> None:
     boefje_meta = get_boefje_meta()
     bytes_api_client.save_boefje_meta(boefje_meta)
@@ -95,7 +117,7 @@ def test_filtered_boefje_meta(bytes_api_client: BytesAPIClient) -> None:
     assert len(retrieved_boefje_metas) == 1
     assert boefje_meta == retrieved_boefje_metas[0]
 
-    second_boefje_meta = get_boefje_meta(str(uuid.uuid4()), input_ooi="Network|internet")
+    second_boefje_meta = get_boefje_meta(uuid.uuid4(), input_ooi="Network|internet")
     bytes_api_client.save_boefje_meta(second_boefje_meta)
 
     query_filter = BoefjeMetaFilter(organization=boefje_meta.organization, boefje_id=boefje_meta.boefje.id, limit=2)
@@ -151,11 +173,11 @@ def test_filtered_normalizer_meta(bytes_api_client: BytesAPIClient) -> None:
     assert normalizer_meta == retrieved_normalizer_metas[0]
 
     second_normalizer_meta = get_normalizer_meta(raw_id)
-    second_normalizer_meta.id = str(uuid.uuid4())
+    second_normalizer_meta.id = uuid.uuid4()
     bytes_api_client.save_normalizer_meta(second_normalizer_meta)
 
     third_normalizer_meta = get_normalizer_meta(raw_id)
-    third_normalizer_meta.id = str(uuid.uuid4())
+    third_normalizer_meta.id = uuid.uuid4()
     third_normalizer_meta.normalizer.id = "third/normalizer"
     bytes_api_client.save_normalizer_meta(third_normalizer_meta)
 
@@ -206,11 +228,11 @@ def test_raw(bytes_api_client: BytesAPIClient, event_manager: RabbitMQEventManag
     method, properties, body = event_manager.connection.channel().basic_get("test__raw_file_received")
     event_manager.connection.channel().basic_ack(method.delivery_tag)
 
-    assert boefje_meta.id in body.decode()
+    assert str(boefje_meta.id) in body.decode()
 
 
 def test_save_raw_with_one_mime_type(bytes_api_client: BytesAPIClient) -> None:
-    boefje_meta = get_boefje_meta(meta_id=str(uuid.uuid4()))
+    boefje_meta = get_boefje_meta(meta_id=uuid.uuid4())
     bytes_api_client.save_boefje_meta(boefje_meta)
     mime_type = "text/kat-test"
 
@@ -230,22 +252,24 @@ def test_save_raw_with_one_mime_type(bytes_api_client: BytesAPIClient) -> None:
 
 
 def test_save_raw_no_mime_types(bytes_api_client: BytesAPIClient) -> None:
-    boefje_meta = get_boefje_meta(meta_id=str(uuid.uuid4()))
+    boefje_meta = get_boefje_meta(meta_id=uuid.uuid4())
     bytes_api_client.save_boefje_meta(boefje_meta)
 
     headers = {"content-type": "application/octet-stream"}
     bytes_api_client.login()
-    headers.update(bytes_api_client.headers)
+    headers.update(bytes_api_client.client.headers)
 
-    raw_url = f"{bytes_api_client._session._base_url}/bytes/raw"
+    raw_url = f"{bytes_api_client.client.base_url}/bytes/raw"
 
     raw = b"second test 123456"
-    response = requests.post(raw_url, data=raw, headers=headers, params={"boefje_meta_id": boefje_meta.id})
+    response = httpx.post(
+        raw_url, content=raw, headers=headers, params={"boefje_meta_id": str(boefje_meta.id)}, timeout=30
+    )
 
     assert response.status_code == 200
 
-    get_raw_without_mime_type_response = requests.get(
-        f"{raw_url}/{response.json().get('id')}", headers=bytes_api_client.headers, stream=True
+    get_raw_without_mime_type_response = httpx.get(
+        f"{raw_url}/{response.json().get('id')}", headers=bytes_api_client.client.headers, timeout=30
     )
 
     assert get_raw_without_mime_type_response.status_code == 200
@@ -253,7 +277,7 @@ def test_save_raw_no_mime_types(bytes_api_client: BytesAPIClient) -> None:
 
 
 def test_raw_mimes(bytes_api_client: BytesAPIClient) -> None:
-    boefje_meta = get_boefje_meta(meta_id=str(uuid.uuid4()))
+    boefje_meta = get_boefje_meta(meta_id=uuid.uuid4())
     bytes_api_client.save_boefje_meta(boefje_meta)
     mime_types = ["text/kat-test", "text/html"]
     second_mime_types = ["text/kat-test", "text/status-code"]

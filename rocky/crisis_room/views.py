@@ -1,8 +1,6 @@
-import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Dict, List
 
+import structlog
 from account.models import KATUser
 from django.conf import settings
 from django.contrib import messages
@@ -11,14 +9,15 @@ from django.utils.translation import gettext_lazy as _
 from django.views.generic import TemplateView
 from tools.forms.base import ObservedAtForm
 from tools.models import Organization
-from tools.view_helpers import BreadcrumbsMixin, convert_date_to_datetime
+from tools.view_helpers import BreadcrumbsMixin
 
 from octopoes.connector import ConnectorException
 from octopoes.connector.octopoes import OctopoesAPIConnector
 from octopoes.models.ooi.findings import RiskLevelSeverity
+from rocky.views.mixins import ObservedAtMixin
 from rocky.views.ooi_view import ConnectorFormMixin
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # dataclass to store finding type counts
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 class OrganizationFindingCountPerSeverity:
     name: str
     code: str
-    finding_count_per_severity: Dict[str, int]
+    finding_count_per_severity: dict[str, int]
 
     @property
     def total(self) -> int:
@@ -40,32 +39,29 @@ class OrganizationFindingCountPerSeverity:
             return 0
 
 
-class CrisisRoomBreadcrumbsMixin(BreadcrumbsMixin):
+class CrisisRoomView(BreadcrumbsMixin, ConnectorFormMixin, ObservedAtMixin, TemplateView):
+    template_name = "crisis_room/crisis_room.html"
+    connector_form_class = ObservedAtForm
     breadcrumbs = [
         {"url": "", "text": "Crisis Room"},
     ]
 
-
-class CrisisRoomView(CrisisRoomBreadcrumbsMixin, ConnectorFormMixin, TemplateView):
-    template_name = "crisis_room/crisis_room.html"
-    connector_form_class = ObservedAtForm
-
     def sort_by_total(
-        self, finding_counts: List[OrganizationFindingCountPerSeverity]
-    ) -> List[OrganizationFindingCountPerSeverity]:
+        self, finding_counts: list[OrganizationFindingCountPerSeverity]
+    ) -> list[OrganizationFindingCountPerSeverity]:
         is_desc = self.request.GET.get("sort_total_by", "desc") != "asc"
         return sorted(finding_counts, key=lambda x: x.total, reverse=is_desc)
 
     def sort_by_severity(
-        self, finding_counts: List[OrganizationFindingCountPerSeverity]
-    ) -> List[OrganizationFindingCountPerSeverity]:
+        self, finding_counts: list[OrganizationFindingCountPerSeverity]
+    ) -> list[OrganizationFindingCountPerSeverity]:
         is_desc = self.request.GET.get("sort_critical_by", "desc") != "asc"
         return sorted(finding_counts, key=lambda x: x.total_critical, reverse=is_desc)
 
-    def get_finding_type_severity_count(self, organization: Organization) -> Dict[str, int]:
+    def get_finding_type_severity_count(self, organization: Organization) -> dict[str, int]:
         try:
             api_connector = OctopoesAPIConnector(settings.OCTOPOES_API, organization.code)
-            return api_connector.count_findings_by_severity(valid_time=self.get_observed_at())
+            return api_connector.count_findings_by_severity(valid_time=self.observed_at)
         except ConnectorException:
             messages.add_message(
                 self.request,
@@ -76,16 +72,6 @@ class CrisisRoomView(CrisisRoomBreadcrumbsMixin, ConnectorFormMixin, TemplateVie
             )
             logger.exception("Failed to get list of findings for organization %s", organization.code)
             return {}
-
-    def get_observed_at(self) -> datetime:
-        if "observed_at" not in self.request.GET:
-            return datetime.now(timezone.utc)
-
-        try:
-            datetime_format = "%Y-%m-%d"
-            return convert_date_to_datetime(datetime.strptime(self.request.GET.get("observed_at"), datetime_format))
-        except ValueError:
-            return datetime.now(timezone.utc)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -112,6 +98,6 @@ class CrisisRoomView(CrisisRoomBreadcrumbsMixin, ConnectorFormMixin, TemplateVie
         context["org_finding_counts_per_severity_critical"] = self.sort_by_severity(org_finding_counts_per_severity)
 
         context["observed_at_form"] = self.get_connector_form()
-        context["observed_at"] = self.get_observed_at().date()
+        context["observed_at"] = self.observed_at.date()
 
         return context

@@ -1,6 +1,4 @@
-import logging
-from typing import Dict
-
+import structlog
 from cachetools import TTLCache, cached
 from prometheus_client import CollectorRegistry, Gauge
 
@@ -22,16 +20,19 @@ bytes_database_raw_files_total = Gauge(
     labelnames=["organization_id"],
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def ignore_arguments_key(meta_repository: MetaDataRepository):
     return ""
 
 
-@cached(cache=TTLCache(maxsize=1, ttl=get_settings().bytes_metrics_ttl_seconds), key=ignore_arguments_key)
-def cached_counts_per_organization(meta_repository: MetaDataRepository) -> Dict[str, int]:
-    logger.debug("Metrics cache miss, ttl set to %s seconds", get_settings().bytes_metrics_ttl_seconds)
+@cached(cache=TTLCache(maxsize=1, ttl=get_settings().metrics_ttl_seconds), key=ignore_arguments_key)
+def cached_counts_per_organization(meta_repository: MetaDataRepository) -> dict[str, int]:
+    logger.debug(
+        "Metrics cache miss for cached_counts_per_organization, ttl set to %s seconds",
+        get_settings().metrics_ttl_seconds,
+    )
 
     return meta_repository.get_raw_file_count_per_organization()
 

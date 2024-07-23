@@ -1,11 +1,7 @@
 from unittest import TestCase
 
-from octopoes.config.settings import XTDBType
-from octopoes.xtdb import (
-    Datamodel,
-    FieldSet,
-    ForeignKey,
-)
+from octopoes.models.origin import Origin
+from octopoes.xtdb import Datamodel, FieldSet, ForeignKey
 from octopoes.xtdb.query_builder import generate_pull_query
 from octopoes.xtdb.related_field_generator import RelatedFieldNode
 
@@ -196,9 +192,8 @@ class QueryNodeTest(TestCase):
         field_node.build_tree(1)
 
         query = generate_pull_query(
-            XTDBType.CRUX,
             FieldSet.ALL_FIELDS,
-            {"db.crux/id": "IpAddressV4|internet|1.1.1.1"},
+            {"xt/id": "IpAddressV4|internet|1.1.1.1"},
             field_node=field_node,
         )
 
@@ -206,7 +201,7 @@ class QueryNodeTest(TestCase):
             "{:query {:find [(pull ?e [* {(:DnsARecord/_IpAddressV4 {:as DnsARecord/_IpAddressV4}) [*]} "
             "{(:Finding/_OOI {:as Finding/_OOI}) [*]} {(:IpAddressV4/Network {:as Network}) [*]} "
             "{(:IpPort/_IpAddress {:as IpPort/_IpAddress}) [*]} {(:Job/_oois {:as Job/_oois}) [*]}])] "
-            ':in [_db_crux_id] :where [[?e :db.crux/id _db_crux_id]]   } :in-args [ "IpAddressV4|internet|1.1.1.1" ]}'
+            ':in [_xt_id] :where [[?e :xt/id _xt_id]]   } :in-args [ "IpAddressV4|internet|1.1.1.1" ]}'
         )
         self.assertEqual(
             expected_query,
@@ -227,3 +222,18 @@ class QueryNodeTest(TestCase):
             expected_query,
             query,
         )
+
+    def test_get_origin_by_task_id(self):
+        query = generate_pull_query(
+            FieldSet.ALL_FIELDS,
+            {
+                "task_id": "5c864d45a4364a81a5fecfd8b359cf9d",
+                "type": Origin.__name__,
+            },
+        )
+
+        expected_query = (
+            "{:query {:find [(pull ?e [*])] :in [_task_id _type] :where [[?e :task_id _task_id] "
+            '[?e :type _type]]   } :in-args [ "5c864d45a4364a81a5fecfd8b359cf9d" "Origin" ]}'
+        )
+        self.assertEqual(expected_query, query)

@@ -1,19 +1,19 @@
 import csv
 import io
 import logging
+from collections.abc import Iterable
 from ipaddress import IPv4Network, ip_network
-from typing import Dict, Iterable, List, Tuple, Union
 
 from pydantic import ValidationError
 
-from boefjes.job_models import NormalizerMeta
-from octopoes.models import OOI, Reference
+from boefjes.job_models import NormalizerDeclaration, NormalizerOutput
+from octopoes.models import Reference
 from octopoes.models.ooi.dns.zone import Hostname
 from octopoes.models.ooi.network import IPAddressV4, IPAddressV6, Network
 from octopoes.models.ooi.web import URL
 from octopoes.models.types import OOIType
 
-OOI_TYPES = {
+OOI_TYPES: dict[str, dict] = {
     "Hostname": {"type": Hostname},
     "URL": {"type": URL},
     "Network": {"type": Network, "default": "internet", "argument": "name"},
@@ -24,13 +24,13 @@ OOI_TYPES = {
 logger = logging.getLogger(__name__)
 
 
-def run(normalizer_meta: NormalizerMeta, raw: Union[bytes, str]) -> Iterable[OOI]:
+def run(input_ooi: dict, raw: bytes) -> Iterable[NormalizerOutput]:
     reference_cache = {"Network": {"internet": Network(name="internet")}}
 
     yield from process_csv(raw, reference_cache)
 
 
-def process_csv(csv_raw_data, reference_cache):
+def process_csv(csv_raw_data, reference_cache) -> Iterable[NormalizerOutput]:
     csv_data = io.StringIO(csv_raw_data.decode("UTF-8"))
 
     object_type = get_object_type(csv_data)
@@ -42,13 +42,9 @@ def process_csv(csv_raw_data, reference_cache):
         try:
             ooi, extra_declarations = get_ooi_from_csv(object_type, row, reference_cache)
 
-            for declaration in extra_declarations:
-                yield declaration
+            yield from extra_declarations
 
-            yield {
-                "type": "declaration",
-                "ooi": ooi.dict(),
-            }
+            yield NormalizerDeclaration(ooi=ooi)
         except ValidationError:
             logger.exception("Validation failed for row %s", row)
 
@@ -77,25 +73,27 @@ def get_object_type(csv_data: io.StringIO) -> str:
     raise ValueError("Unsupported OOI type for csv normalizer.")
 
 
-def get_ooi_from_csv(ooi_type_name: str, values: Dict[str, str], reference_cache) -> Tuple[OOIType, List]:
+def get_ooi_from_csv(
+    ooi_type_name: str, values: dict[str, str], reference_cache
+) -> tuple[OOIType, list[NormalizerDeclaration]]:
     skip_properties = ("object_type", "scan_profile", "primary_key")
 
     ooi_type = OOI_TYPES[ooi_type_name]["type"]
     ooi_fields = [
-        (field, model_field.type_ == Reference, model_field.required)
-        for field, model_field in ooi_type.__fields__.items()
+        (field, model_field.annotation == Reference, model_field.is_required())
+        for field, model_field in ooi_type.model_fields.items()
         if field not in skip_properties
     ]
 
     kwargs = {}
-    extra_declarations = []
+    extra_declarations: list[NormalizerDeclaration] = []
 
     for field, is_reference, required in ooi_fields:
         if is_reference and required:
             try:
                 referenced_ooi = get_or_create_reference(field, values.get(field), reference_cache)
 
-                extra_declarations.append({"type": "declaration", "ooi": referenced_ooi.dict()})
+                extra_declarations.append(NormalizerDeclaration(ooi=referenced_ooi))
                 kwargs[field] = referenced_ooi.reference
             except IndexError:
                 if required:
@@ -111,7 +109,7 @@ def get_ooi_from_csv(ooi_type_name: str, values: Dict[str, str], reference_cache
     return ooi_type(**kwargs), extra_declarations
 
 
-def get_or_create_reference(ooi_type_name: str, value: str, reference_cache):
+def get_or_create_reference(ooi_type_name: str, value: str | None, reference_cache):
     ooi_type_name = next(filter(lambda x: x.casefold() == ooi_type_name.casefold(), OOI_TYPES.keys()))
 
     # get from cache

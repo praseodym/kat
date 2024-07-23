@@ -1,6 +1,5 @@
-from abc import ABC
 from enum import Enum
-from typing import Dict, Literal, Optional
+from typing import Literal
 
 from pydantic import AnyUrl
 
@@ -27,7 +26,7 @@ class Website(OOI):
 
     ip_service: Reference = ReferenceField(IPService, max_issue_scan_level=0, max_inherit_scan_level=4)
     hostname: Reference = ReferenceField(Hostname, max_inherit_scan_level=4)
-    certificate: Optional[Reference] = ReferenceField(X509Certificate, default=None, max_issue_scan_level=1)
+    certificate: Reference | None = ReferenceField(X509Certificate, default=None, max_issue_scan_level=1)
 
     _natural_key_attrs = ["ip_service", "hostname"]
 
@@ -47,7 +46,7 @@ class WebScheme(Enum):
     HTTPS = "https"
 
 
-class WebURL(OOI, ABC):
+class WebURL(OOI):
     network: Reference = ReferenceField(Network)
 
     scheme: WebScheme
@@ -90,7 +89,7 @@ class HTTPResource(OOI):
 
     website: Reference = ReferenceField(Website, max_issue_scan_level=0, max_inherit_scan_level=4)
     web_url: Reference = ReferenceField(WebURL, max_issue_scan_level=1, max_inherit_scan_level=4)
-    redirects_to: Optional[Reference] = ReferenceField(WebURL, default=None)
+    redirects_to: Reference | None = ReferenceField(WebURL, default=None)
 
     _natural_key_attrs = ["website", "web_url"]
 
@@ -147,7 +146,7 @@ class URL(OOI):
     network: Reference = ReferenceField(Network)
     raw: AnyUrl
 
-    web_url: Optional[Reference] = ReferenceField(WebURL, max_issue_scan_level=2, default=None)
+    web_url: Reference | None = ReferenceField(WebURL, max_issue_scan_level=2, default=None)
 
     _natural_key_attrs = ["network", "raw"]
 
@@ -212,25 +211,31 @@ class ImageMetadata(OOI):
     object_type: Literal["ImageMetadata"] = "ImageMetadata"
 
     resource: Reference = ReferenceField(HTTPResource, max_issue_scan_level=0, max_inherit_scan_level=4)
-    image_info: Dict
+    image_info: dict
 
     _natural_key_attrs = ["resource"]
     _reverse_relation_names = {"resource": "ImageMetaData"}
 
     @classmethod
     def format_reference_human_readable(cls, reference: Reference) -> str:
-        t = reference.tokenized
-
-        port = f":{t.resource.web_url.port}" if t.resource.web_url.port else ""
         try:
-            netloc = t.resource.web_url.netloc.address
-        except KeyError:
-            netloc = t.resource.web_url.netloc.name
+            t = reference.tokenized
 
-        web_url = f"{t.resource.web_url.scheme}://{netloc}{port}{t.resource.web_url.path}"
-        address = t.resource.website.ip_service.ip_port.address.address
+            port = f":{t.resource.web_url.port}" if t.resource.web_url.port else ""
+            try:
+                netloc = t.resource.web_url.netloc.address
+            except KeyError:
+                netloc = t.resource.web_url.netloc.name
 
-        return f"{web_url} @ {address}"
+            web_url = f"{t.resource.web_url.scheme}://{netloc}{port}{t.resource.web_url.path}"
+            address = t.resource.website.ip_service.ip_port.address.address
+
+            return f"{web_url} @ {address}"
+        except IndexError:
+            # try parsing reference as a HostnameHTTPURL instead
+            tokenized = HostnameHTTPURL.get_tokenized_primary_key(reference.natural_key)
+            port = f":{tokenized.port}" if tokenized.port else ""
+            return f"{tokenized.scheme}://{tokenized.netloc.name}{port}{tokenized.path}"
 
 
 class RESTAPI(OOI):
@@ -284,3 +289,22 @@ class APIDesignRuleResult(OOI):
         api_url = format_web_url_token(t.rest_api.api_url)
 
         return f"{rule} @ {api_url}"
+
+
+class SecurityTXT(OOI):
+    object_type: Literal["SecurityTXT"] = "SecurityTXT"
+
+    website: Reference = ReferenceField("Website", max_issue_scan_level=0, max_inherit_scan_level=4)
+    url: Reference = ReferenceField("URL", max_issue_scan_level=0, max_inherit_scan_level=4)
+
+    redirects_to: Reference | None = ReferenceField(
+        "SecurityTXT", max_issue_scan_level=2, max_inherit_scan_level=0, default=None
+    )
+    security_txt: str | None = None
+
+    _natural_key_attrs = ["website", "url"]
+    _reverse_relation_names = {
+        "website": "security_txt_of",
+        "url": "security_txt",
+        "redirects_to": "is_being_redirected_to_by",
+    }

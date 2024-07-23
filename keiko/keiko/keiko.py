@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from logging import DEBUG, ERROR, getLogger
 from pathlib import Path
-from typing import Any, Dict, Set, Tuple
+from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 from opentelemetry import trace
@@ -36,7 +36,7 @@ LATEX_SPECIAL_CHARS = str.maketrans(
         "\\": r"\textbackslash{}",
         "\n": "\\newline%\n",
         "-": r"{-}",
-        "\xA0": "~",  # Non-breaking space
+        "\xa0": "~",  # Non-breaking space
         "[": r"{[}",
         "]": r"{]}",
     }
@@ -54,6 +54,23 @@ def latex_escape(text: Any) -> str:
     if not isinstance(text, str):
         text = str(text)
     return text.translate(LATEX_SPECIAL_CHARS)
+
+
+def to_text(text: Any) -> str:
+    if not isinstance(text, str):
+        text = str(text)
+
+    return text.replace("_", " ").capitalize()
+
+
+def format_object(obj: Any) -> str:
+    if isinstance(obj, str):
+        return obj.replace("_", " ").capitalize()
+
+    if isinstance(obj, list):
+        return ", ".join([format_object(item) for item in obj])
+
+    return obj
 
 
 def baretext(text: str) -> str:
@@ -89,12 +106,14 @@ def generate_report(
     logger.info("Glossary loaded. [report_id=%s] [glossary=%s]", report_id, glossary)
 
     # init jinja2 template
-    env = Environment(
+    env = Environment(  # noqa: S701
         loader=FileSystemLoader(settings.templates_folder),
         variable_start_string="@@{",
         variable_end_string="}@@",
     )
     env.filters["latex_escape"] = latex_escape
+    env.filters["to_text"] = to_text
+    env.filters["format_object"] = format_object
     template = env.get_template(f"{template_name}/template.tex")
 
     if not template.filename:
@@ -109,7 +128,7 @@ def generate_report(
         raise ex
 
     # read template and find used glossary entries
-    found_entries: Set[str] = set()
+    found_entries: set[str] = set()
     with Path(template.filename).open(encoding="utf-8") as template_file:
         for line in template_file:
             for word in line.split():
@@ -164,7 +183,7 @@ def generate_report(
             )
 
             json_output_file_path = output_file.with_suffix(".keiko.json")
-            json_output_file_path.write_text(report_data.json(indent=4))
+            json_output_file_path.write_text(report_data.model_dump_json(indent=4))
 
         # run pdflatex
         cmd = [
@@ -220,7 +239,7 @@ def generate_report(
     # ...tempfiles are deleted automatically when leaving the context
 
 
-def read_glossary(glossary: str, settings: Settings) -> Dict[str, Tuple[str, str]]:
+def read_glossary(glossary: str, settings: Settings) -> dict[str, tuple[str, str]]:
     """Read a glossary CSV file and return a dictionary of entries."""
     glossary_entries = {}
     glossary_file_path = settings.glossaries_folder / glossary

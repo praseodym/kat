@@ -2,6 +2,11 @@ name: Keiko Check the LaTeX style using linters
 
 on:
   push:
+    branches:
+      - "main"
+      - "release-*"
+    tags:
+      - "*"
     paths:
       - keiko/**
   pull_request:
@@ -13,7 +18,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@v4
 
       - name: Install chktex
         run: sudo apt-get install chktex

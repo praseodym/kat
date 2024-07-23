@@ -1,7 +1,6 @@
 import logging
 import re
 from enum import Enum
-from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +70,7 @@ def check_version(version1: str, version2: str) -> VersionCheck:
         return check_version(version1_split[1], version2_split[1])
 
 
-def check_version_agains_versionlist(my_version: str, all_versions: List[str]):
+def check_version_agains_versionlist(my_version: str, all_versions: list[str]):
     lowerbound = all_versions.pop(0).strip()
     upperbound = None
 
@@ -80,13 +79,12 @@ def check_version_agains_versionlist(my_version: str, all_versions: List[str]):
 
     start_inequality = re.search(regex_ineq_lowerbound, lowerbound)
     start_version = re.search("^[0-9a-z*]", lowerbound)
-    end_bracket = False
+    end_bracket = None
 
     lowerbound_ok = False
-    lowerbound_versioncheck = None
 
     # Check if lowerbound is < or <=
-    if re.search("^[[(]", lowerbound):
+    if re.search(r"^[\[(]", lowerbound):
         # Example: "(1.1,1.4]"  # https://snyk.io/vuln/maven%3Aorg.apache.nifi%3Anifi-security-utils
         upperbound = all_versions.pop(0).strip()
         end_bracket = re.search("[])]$", upperbound)
@@ -138,7 +136,7 @@ def check_version_agains_versionlist(my_version: str, all_versions: List[str]):
         return False, None
 
     start_inequality = re.search(regex_ineq_upperbound, upperbound)
-    upperbound_versioncheck = None
+
     if end_bracket:
         # Example: "(1.2,1.4]"
         upperbound_versioncheck = VersionCheck.SMALLER if upperbound[-1] == ")" else VersionCheck.SMALLER_EQUAL
@@ -167,6 +165,8 @@ def check_version_agains_versionlist(my_version: str, all_versions: List[str]):
 
 
 def check_version_in(version: str, versions: str):
+    if not version:
+        return False
     all_versions = versions.split(",")  # Example: https://snyk.io/vuln/composer%3Awoocommerce%2Fwoocommerce-blocks
     in_range = False
     while not in_range and all_versions:

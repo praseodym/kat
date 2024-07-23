@@ -1,12 +1,14 @@
-import logging
-from typing import List, Optional
+from uuid import UUID
 
+import structlog
+from cachetools import TTLCache, cached
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from starlette.responses import JSONResponse
 
 from bytes.api.models import RawResponse
 from bytes.auth import authenticate_token
+from bytes.config import get_settings
 from bytes.database.sql_meta_repository import MetaIntegrityError, ObjectNotFoundException, create_meta_data_repository
 from bytes.events.events import RawFileReceived
 from bytes.events.manager import EventManager
@@ -14,7 +16,7 @@ from bytes.models import BoefjeMeta, MimeType, NormalizerMeta, RawData, RawDataM
 from bytes.rabbitmq import create_event_manager
 from bytes.repositories.meta_repository import BoefjeMetaFilter, MetaDataRepository, NormalizerMetaFilter, RawDataFilter
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 router = APIRouter(dependencies=[Depends(authenticate_token)])
 BOEFJE_META_TAG = "BoefjeMeta"
 NORMALIZER_META_TAG = "NormalizerMeta"
@@ -39,7 +41,7 @@ def create_boefje_meta(
 
 @router.get("/boefje_meta/{boefje_meta_id}", response_model=BoefjeMeta, tags=[BOEFJE_META_TAG])
 def get_boefje_meta_by_id(
-    boefje_meta_id: str,
+    boefje_meta_id: UUID,
     meta_repository: MetaDataRepository = Depends(create_meta_data_repository),
 ) -> BoefjeMeta:
     with meta_repository:
@@ -49,16 +51,16 @@ def get_boefje_meta_by_id(
         return meta
 
 
-@router.get("/boefje_meta", response_model=List[BoefjeMeta], tags=[BOEFJE_META_TAG])
+@router.get("/boefje_meta", response_model=list[BoefjeMeta], tags=[BOEFJE_META_TAG])
 def get_boefje_meta(
     organization: str,
-    boefje_id: Optional[str] = None,
-    input_ooi: Optional[str] = None,
+    boefje_id: str | None = None,
+    input_ooi: str | None = None,
     limit: int = 1,
     offset: int = 0,
     descending: bool = True,
     meta_repository: MetaDataRepository = Depends(create_meta_data_repository),
-) -> List[BoefjeMeta]:
+) -> list[BoefjeMeta]:
     logger.debug(
         "Filtering boefje_meta on: boefje_id=%s, input_ooi=%s, limit=%s, descending=%s",
         boefje_id,
@@ -100,23 +102,23 @@ def create_normalizer_meta(
 
 @router.get("/normalizer_meta/{normalizer_meta_id}", response_model=NormalizerMeta, tags=[NORMALIZER_META_TAG])
 def get_normalizer_meta_by_id(
-    normalizer_meta_id: str,
+    normalizer_meta_id: UUID,
     meta_repository: MetaDataRepository = Depends(create_meta_data_repository),
 ) -> NormalizerMeta:
     with meta_repository:
         return meta_repository.get_normalizer_meta_by_id(normalizer_meta_id)
 
 
-@router.get("/normalizer_meta", response_model=List[NormalizerMeta], tags=[NORMALIZER_META_TAG])
+@router.get("/normalizer_meta", response_model=list[NormalizerMeta], tags=[NORMALIZER_META_TAG])
 def get_normalizer_meta(
     organization: str,
-    normalizer_id: Optional[str] = None,
-    raw_id: Optional[str] = None,
+    normalizer_id: str | None = None,
+    raw_id: UUID | None = None,
     limit: int = 1,
     offset: int = 0,
     descending: bool = True,
     meta_repository: MetaDataRepository = Depends(create_meta_data_repository),
-) -> List[NormalizerMeta]:
+) -> list[NormalizerMeta]:
     logger.debug(
         "Filtering normalizer_meta on: normalizer_id=%s, raw_id=%s, limit=%s, offset=%s, descending=%s",
         normalizer_id,
@@ -144,8 +146,8 @@ def get_normalizer_meta(
 @router.post("/raw", tags=[RAW_TAG])
 async def create_raw(
     request: Request,
-    boefje_meta_id: str,
-    mime_types: Optional[List[str]] = Query(None),
+    boefje_meta_id: UUID,
+    mime_types: list[str] | None = Query(None),
     meta_repository: MetaDataRepository = Depends(create_meta_data_repository),
     event_manager: EventManager = Depends(create_event_manager),
 ) -> RawResponse:
@@ -181,7 +183,7 @@ async def create_raw(
 
 @router.get("/raw/{raw_id}", tags=[RAW_TAG])
 def get_raw_by_id(
-    raw_id: str,
+    raw_id: UUID,
     meta_repository: MetaDataRepository = Depends(create_meta_data_repository),
 ) -> Response:
     try:
@@ -192,15 +194,28 @@ def get_raw_by_id(
     return Response(raw_data.value, media_type="application/octet-stream")
 
 
-@router.get("/raw", response_model=List[RawDataMeta], tags=[RAW_TAG])
-def get_raws(
-    organization: Optional[str] = None,
-    boefje_meta_id: Optional[str] = None,
-    normalized: Optional[bool] = None,
-    limit: int = 1,
-    mime_types: Optional[List[str]] = Query(None),
+@router.get("/raw/{raw_id}/meta", tags=[RAW_TAG])
+def get_raw_meta_by_id(
+    raw_id: UUID,
     meta_repository: MetaDataRepository = Depends(create_meta_data_repository),
-) -> List[RawDataMeta]:
+) -> RawDataMeta:
+    try:
+        raw_meta = meta_repository.get_raw_meta_by_id(raw_id)
+    except ObjectNotFoundException as error:
+        raise HTTPException(status_code=404, detail="No raw data found") from error
+
+    return raw_meta
+
+
+@router.get("/raw", response_model=list[RawDataMeta], tags=[RAW_TAG])
+def get_raw(
+    organization: str | None = None,
+    boefje_meta_id: UUID | None = None,
+    normalized: bool | None = None,
+    limit: int = 1,
+    mime_types: list[str] | None = Query(None),
+    meta_repository: MetaDataRepository = Depends(create_meta_data_repository),
+) -> list[RawDataMeta]:
     """Get a filtered list of RawDataMeta objects, which contains metadata of a RawData object without the contents"""
 
     parsed_mime_types = [] if mime_types is None else [MimeType(value=mime_type) for mime_type in mime_types]
@@ -216,3 +231,45 @@ def get_raws(
     logger.info("mime_types: %s", parsed_mime_types)
 
     return meta_repository.get_raw(query_filter)
+
+
+@router.get("/mime_types", response_model=dict[str, int], tags=[RAW_TAG])
+def get_raw_count_per_mime_type(
+    organization: str | None = None,
+    boefje_meta_id: UUID | None = None,
+    normalized: bool | None = None,
+    mime_types: list[str] | None = Query(None),
+    meta_repository: MetaDataRepository = Depends(create_meta_data_repository),
+) -> dict[str, int]:
+    parsed_mime_types = [] if mime_types is None else [MimeType(value=mime_type) for mime_type in mime_types]
+
+    query_filter = RawDataFilter(
+        organization=organization,
+        boefje_meta_id=boefje_meta_id,
+        normalized=normalized,
+        mime_types=parsed_mime_types,
+        offset=None,
+        limit=None,
+    )
+
+    logger.info("mime_types: %s", parsed_mime_types)
+
+    return cached_counts_per_mime_type(meta_repository, query_filter)
+
+
+def ignore_arguments_key(meta_repository: MetaDataRepository, query_filter: RawDataFilter):
+    """Helper to not cache based on the stateful meta_repository, but only use the query parameters as a key."""
+    return query_filter.json()
+
+
+@cached(
+    cache=TTLCache(maxsize=get_settings().metrics_cache_size, ttl=get_settings().metrics_ttl_seconds),
+    key=ignore_arguments_key,
+)
+def cached_counts_per_mime_type(meta_repository: MetaDataRepository, query_filter: RawDataFilter) -> dict[str, int]:
+    logger.debug(
+        "Metrics cache miss for cached_counts_per_mime_type, ttl set to %s seconds",
+        get_settings().metrics_ttl_seconds,
+    )
+
+    return meta_repository.get_raw_file_count_per_mime_type(query_filter)

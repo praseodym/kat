@@ -1,19 +1,18 @@
 import json
 import logging
-from typing import Iterable, Union
+from collections.abc import Iterable
 
-from boefjes.job_models import NormalizerMeta
-from octopoes.models import OOI
+from boefjes.job_models import NormalizerAffirmation, NormalizerOutput
 from octopoes.models.ooi.findings import RiskLevelSeverity, SnykFindingType
 
 logger = logging.getLogger(__name__)
 
 
 SEVERITY_SCORE_LOOKUP = {
-    RiskLevelSeverity.CRITICAL: 10.0,
-    RiskLevelSeverity.HIGH: 8.9,
-    RiskLevelSeverity.MEDIUM: 6.9,
-    RiskLevelSeverity.LOW: 3.9,
+    RiskLevelSeverity.CRITICAL: 9.0,
+    RiskLevelSeverity.HIGH: 7.0,
+    RiskLevelSeverity.MEDIUM: 4.0,
+    RiskLevelSeverity.LOW: 0.1,
     RiskLevelSeverity.RECOMMENDATION: 0.0,
 }
 
@@ -25,17 +24,19 @@ def get_risk_level(severity_score):
     return None
 
 
-def run(normalizer_meta: NormalizerMeta, raw: Union[bytes, str]) -> Iterable[OOI]:
-    snyk_finding_type_id = normalizer_meta.raw_data.boefje_meta.arguments["input"]["id"]
+def run(input_ooi: dict, raw: bytes) -> Iterable[NormalizerOutput]:
+    snyk_finding_type_id = input_ooi["id"]
     data = json.loads(raw)
 
     risk_score = data.get("risk")
     risk_severity = get_risk_level(float(risk_score))
 
-    yield SnykFindingType(
-        id=snyk_finding_type_id,
-        description=data.get("summary"),
-        source=f"https://snyk.io/vuln/{snyk_finding_type_id}",
-        risk_severity=risk_severity,
-        risk_score=risk_score,
+    yield NormalizerAffirmation(
+        ooi=SnykFindingType(
+            id=snyk_finding_type_id,
+            description=data.get("summary"),
+            source=f"https://snyk.io/vuln/{snyk_finding_type_id}",
+            risk_severity=risk_severity,
+            risk_score=risk_score,
+        )
     )

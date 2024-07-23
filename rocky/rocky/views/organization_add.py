@@ -1,5 +1,4 @@
-import logging
-
+import structlog
 from account.forms import OrganizationForm
 from django.contrib import messages
 from django.contrib.auth.mixins import PermissionRequiredMixin
@@ -11,7 +10,7 @@ from tools.models import Organization, OrganizationMember
 
 from rocky.exceptions import ServiceException
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class OrganizationAddView(PermissionRequiredMixin, CreateView):
@@ -45,7 +44,7 @@ class OrganizationAddView(PermissionRequiredMixin, CreateView):
 
         try:
             member, created = OrganizationMember.objects.get_or_create(user=self.request.user, organization=self.object)
-            member.acknowledged_clearance_level = 4
+            member.acknowledged_clearance_level = 0
             member.trusted_clearance_level = 4
             member.save()
         except Exception:

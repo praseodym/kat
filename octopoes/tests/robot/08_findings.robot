@@ -15,30 +15,27 @@ List Findings
     Declare Scan Profile    Hostname|internet|example.com    1
     Await Sync
 
-    Finding List Should Have Length    4
-    Finding Count Per Severity Should Be    'pending'    4
+    Finding List Should Have Length    1
+    Finding Count Per Severity Should Be    'pending'    1
     Finding Count Per Severity Should Be    'low'    0
     Finding Count Per Severity Should Be    'critical'    0
 
 
 *** Keywords ***
 Setup Test
-    Start Monitoring    ${QUEUE_URI}
+    robot.Setup Test
     Insert Normalizer Output
     Await Sync
 
-Teardown Test
-    Cleanup
-    Await Sync
-    Stop Monitoring
-
 List Findings
-    ${response}    Get    ${OCTOPOES_URI}/findings
+    ${params}    Create Dictionary    valid_time=${VALID_TIME}
+    ${response}    Get    ${OCTOPOES_URI}/findings    params=${params}
     ${response_data}    Set Variable    ${response.json()}
     RETURN    ${response_data}
 
 Get Count Per Severity
-    ${response}    Get    ${OCTOPOES_URI}/findings/count_by_severity
+    ${params}    Create Dictionary    valid_time=${VALID_TIME}
+    ${response}    Get    ${OCTOPOES_URI}/findings/count_by_severity    params=${params}
     ${response_data}    Set Variable    ${response.json()}
     RETURN    ${response_data}
 

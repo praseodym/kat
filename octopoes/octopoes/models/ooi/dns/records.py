@@ -1,18 +1,18 @@
-import abc
 import hashlib
-from typing import Literal, Optional
+from enum import Enum
+from typing import Literal
 
 from octopoes.models import OOI, Reference
 from octopoes.models.ooi.dns.zone import Hostname
-from octopoes.models.ooi.network import IPAddressV4, IPAddressV6
+from octopoes.models.ooi.network import IPAddress, IPAddressV4, IPAddressV6
 from octopoes.models.persistence import ReferenceField
 
 
-class DNSRecord(OOI, abc.ABC):
+class DNSRecord(OOI):
     hostname: Reference = ReferenceField(Hostname, max_issue_scan_level=0, max_inherit_scan_level=2)
-    dns_record_type: Literal["A", "AAAA", "CNAME", "MX", "NS", "PTR", "SOA", "SRV", "TXT"]
+    dns_record_type: Literal["A", "AAAA", "CAA", "CNAME", "MX", "NS", "PTR", "SOA", "SRV", "TXT"]
     value: str
-    ttl: Optional[int]  # todo: validation
+    ttl: int | None = None  # todo: validation
 
     _natural_key_attrs = ["hostname", "value"]
     _reverse_relation_names = {
@@ -55,8 +55,8 @@ class DNSMXRecord(DNSRecord):
     object_type: Literal["DNSMXRecord"] = "DNSMXRecord"
     dns_record_type: Literal["MX"] = "MX"
 
-    mail_hostname: Optional[Reference] = ReferenceField(Hostname, default=None)
-    preference: Optional[int]
+    mail_hostname: Reference | None = ReferenceField(Hostname, default=None)
+    preference: int | None = None
 
     _reverse_relation_names = {
         "hostname": "dns_mx_records",
@@ -106,11 +106,11 @@ class DNSSOARecord(DNSRecord):
     dns_record_type: Literal["SOA"] = "SOA"
 
     soa_hostname: Reference = ReferenceField(Hostname)
-    serial: Optional[int]
-    retry: Optional[int]
-    refresh: Optional[int]
-    expire: Optional[int]
-    minimum: Optional[int]
+    serial: int | None = None
+    retry: int | None = None
+    refresh: int | None = None
+    expire: int | None = None
+    minimum: int | None = None
 
     _reverse_relation_names = {
         "hostname": "dns_soa_records",
@@ -138,3 +138,50 @@ class NXDOMAIN(OOI):
     @classmethod
     def format_reference_human_readable(cls, reference: Reference) -> str:
         return f"NXDOMAIN response on {reference.tokenized.hostname.name}"
+
+
+class DNSPTRRecord(DNSRecord):
+    object_type: Literal["DNSPTRRecord"] = "DNSPTRRecord"
+    dns_record_type: Literal["PTR"] = "PTR"
+    address: Reference | None = ReferenceField(IPAddress)
+
+    _natural_key_attrs = ["hostname", "address"]
+
+    _reverse_relation_names = {
+        "hostname": "dns_ptr_records",
+        "address": "ptr_record_ip",
+    }
+
+    @classmethod
+    def format_reference_human_readable(cls, reference: Reference) -> str:
+        return f"{reference.tokenized.address.address} -> {reference.tokenized.hostname.name}"
+
+
+class CAATAGS(Enum):
+    ISSUE = "issue"
+    ISSUEWILD = "issuewild"
+    IODEF = "iodef"
+    CONTACTEMAIL = "contactemail"
+    CONACTPHONE = "contactphone"
+    ISSUEVMC = "issuevmc"
+    ISSUEMAIL = "issuemail"
+
+    def __str__(self):
+        return self.value
+
+
+class DNSCAARecord(DNSRecord):
+    object_type: Literal["DNSCAARecord"] = "DNSCAARecord"
+    dns_record_type: Literal["CAA"] = "CAA"
+
+    # https://datatracker.ietf.org/doc/html/rfc8659#name-canonical-presentation-form
+    # An unsigned integer between 0 and 255.
+    flags: int | None = None
+
+    # A non-zero-length sequence of ASCII letters and numbers in lowercase.
+    tag: CAATAGS
+
+    # The Value field, expressed as either (1) a contiguous set of characters
+    # without interior spaces or (2) a quoted string.
+    value: str
+    _natural_key_attrs = ["hostname", "flags", "tag", "value"]

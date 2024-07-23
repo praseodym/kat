@@ -1,16 +1,15 @@
 import json
+from collections.abc import Iterable
 from ipaddress import IPv4Address, ip_address
-from typing import Iterable, Union
 
 from tldextract import tldextract
 
-from boefjes.job_models import NormalizerMeta
-from octopoes.models import OOI
+from boefjes.job_models import NormalizerOutput
 from octopoes.models.ooi.dns.zone import Hostname, ResolvedHostname
 from octopoes.models.ooi.network import IPAddressV4, IPAddressV6, Network
 
 
-def run(normalizer_meta: NormalizerMeta, raw: Union[bytes, str]) -> Iterable[OOI]:
+def run(input_ooi: dict, raw: bytes) -> Iterable[NormalizerOutput]:
     results = json.loads(raw)
 
     internet = Network(name="internet")

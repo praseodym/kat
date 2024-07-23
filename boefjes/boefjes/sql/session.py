@@ -1,12 +1,11 @@
-import logging
-from typing import Type
-
+import structlog
 from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import Session
+from typing_extensions import Self
 
-from boefjes.katalogus.storage.interfaces import StorageError
+from boefjes.storage.interfaces import StorageError
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class SessionMixin:
@@ -25,10 +24,10 @@ class SessionMixin:
     def __init__(self, session: Session):
         self.session: Session = session
 
-    def __enter__(self) -> "SessionMixin":
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type: Type[Exception], exc_value: str, exc_traceback: str) -> None:  # noqa: F841
+    def __exit__(self, exc_type: type[Exception], exc_value: str, exc_traceback: str) -> None:  # noqa: F841
         if exc_type is not None:
             logger.error("An error occurred: %s. Rolling back session", exc_value, exc_info=True)
             self.session.rollback()

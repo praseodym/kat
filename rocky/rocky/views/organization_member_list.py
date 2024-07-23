@@ -1,6 +1,6 @@
 from enum import Enum
 
-from account.mixins import OrganizationPermissionRequiredMixin
+from account.mixins import OrganizationPermissionRequiredMixin, OrganizationView
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.db import models
@@ -8,14 +8,14 @@ from django.shortcuts import redirect
 from django.urls.base import reverse
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import ListView
-from requests.exceptions import RequestException
+from httpx import RequestError
 from tools.models import OrganizationMember
 from tools.view_helpers import OrganizationMemberBreadcrumbsMixin
 
 
 class BLOCK_STATUSES(models.TextChoices):
-    BLOCKED = _("Blocked"), "blocked"
-    UNBLOCKED = _("Not blocked"), "unblocked"
+    BLOCKED = "blocked", _("Blocked")
+    UNBLOCKED = "unblocked", _("Not blocked")
 
 
 class PageActions(Enum):
@@ -26,6 +26,7 @@ class PageActions(Enum):
 class OrganizationMemberListView(
     OrganizationPermissionRequiredMixin,
     OrganizationMemberBreadcrumbsMixin,
+    OrganizationView,
     ListView,
 ):
     model = OrganizationMember
@@ -74,19 +75,19 @@ class OrganizationMemberListView(
                 messages.add_message(
                     self.request,
                     messages.SUCCESS,
-                    _("Blocked member %s successfully.") % (organizationmember.user.full_name),
+                    _("Blocked member %s successfully.") % (organizationmember.user.email),
                 )
             elif action == PageActions.UNBLOCK.value:
                 organizationmember.blocked = False
                 messages.add_message(
                     self.request,
                     messages.SUCCESS,
-                    _("Unblocked member %s successfully.") % (organizationmember.user.full_name),
+                    _("Unblocked member %s successfully.") % (organizationmember.user.email),
                 )
             else:
                 raise Exception(f"Unhandled allowed action: {action}")
             organizationmember.save()
-        except RequestException as exception:
+        except RequestError as exception:
             messages.add_message(self.request, messages.ERROR, f"{action} failed: '{exception}'")
 
     def get_filters_active(self):

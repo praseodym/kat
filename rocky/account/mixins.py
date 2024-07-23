@@ -1,16 +1,17 @@
 from datetime import datetime, timezone
-from typing import List, Optional
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.http import Http404
+from django.utils.translation import gettext_lazy as _
 from django.views import View
 from tools.models import Indemnification, Organization, OrganizationMember
 
 from octopoes.connector.octopoes import OctopoesAPIConnector
-from octopoes.models import DeclaredScanProfile, Reference, ScanLevel
-from rocky.bytes_client import BytesClient, get_bytes_client
+from octopoes.models import OOI, DeclaredScanProfile, Reference, ScanLevel
+from rocky.bytes_client import get_bytes_client
 from rocky.exceptions import (
     AcknowledgedClearanceLevelTooLowException,
     IndemnificationNotPresentException,
@@ -65,14 +66,6 @@ class OrganizationPermWrapper:
 
 
 class OrganizationView(View):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.organization = None
-        self.octopoes_api_connector: Optional[OctopoesAPIConnector] = None
-        self.bytes_client: BytesClient = None
-        self.organization_member = None
-        self.indemnification_present = False
-
     def setup(self, request, *args, **kwargs):
         super().setup(request, *args, **kwargs)
 
@@ -89,7 +82,16 @@ class OrganizationView(View):
                 user=self.request.user, organization=self.organization
             )
         except OrganizationMember.DoesNotExist:
-            raise Http404()
+            if not self.request.user.is_superuser:
+                raise Http404()
+
+            self.organization_member = OrganizationMember(
+                user=self.request.user,
+                organization=self.organization,
+                status=OrganizationMember.STATUSES.ACTIVE,
+                trusted_clearance_level=4,
+                acknowledged_clearance_level=0,
+            )
 
         if self.organization_member.blocked:
             raise PermissionDenied()
@@ -106,6 +108,12 @@ class OrganizationView(View):
         context["perms"] = OrganizationPermWrapper(self.organization_member)
         return context
 
+    def indemnification_error(self):
+        return messages.error(
+            self.request,
+            f"Indemnification not present at organization {self.organization}.",
+        )
+
     @property
     def may_update_clearance_level(self) -> bool:
         if not self.indemnification_present:
@@ -119,10 +127,10 @@ class OrganizationView(View):
     def verify_raise_clearance_level(self, level: int) -> bool:
         if not self.indemnification_present:
             raise IndemnificationNotPresentException()
-        if self.organization_member.acknowledged_clearance_level < level:
-            raise AcknowledgedClearanceLevelTooLowException()
         if self.organization_member.trusted_clearance_level < level:
             raise TrustedClearanceLevelTooLowException()
+        if self.organization_member.acknowledged_clearance_level < level:
+            raise AcknowledgedClearanceLevelTooLowException()
         return True
 
     def raise_clearance_level(self, ooi_reference: Reference, level: int) -> bool:
@@ -134,7 +142,7 @@ class OrganizationView(View):
 
         return True
 
-    def raise_clearance_levels(self, ooi_references: List[Reference], level: int) -> bool:
+    def raise_clearance_levels(self, ooi_references: list[Reference], level: int) -> bool:
         self.verify_raise_clearance_level(level)
         self.octopoes_api_connector.save_many_scan_profiles(
             [DeclaredScanProfile(reference=reference, level=ScanLevel(level)) for reference in ooi_references],
@@ -142,6 +150,52 @@ class OrganizationView(View):
         )
 
         return True
+
+    def can_raise_clearance_level(self, ooi: OOI, level: int) -> bool:
+        try:
+            self.raise_clearance_level(ooi.reference, level)
+            messages.success(self.request, _("Clearance level has been set"))
+            return True
+        except IndemnificationNotPresentException:
+            messages.error(
+                self.request,
+                _("Could not raise clearance level of %s to L%s. Indemnification not present at organization %s.")
+                % (
+                    ooi.reference.human_readable,
+                    level,
+                    self.organization.name,
+                ),
+            )
+
+        except TrustedClearanceLevelTooLowException:
+            messages.error(
+                self.request,
+                _(
+                    "Could not raise clearance level of %s to L%s. "
+                    "You were trusted a clearance level of L%s. "
+                    "Contact your administrator to receive a higher clearance."
+                )
+                % (
+                    ooi.reference.human_readable,
+                    level,
+                    self.organization_member.acknowledged_clearance_level,
+                ),
+            )
+        except AcknowledgedClearanceLevelTooLowException:
+            messages.error(
+                self.request,
+                _(
+                    "Could not raise clearance level of %s to L%s. "
+                    "You acknowledged a clearance level of L%s. "
+                    "Please accept the clearance level first on your profile page to proceed."
+                )
+                % (
+                    ooi.reference.human_readable,
+                    level,
+                    self.organization_member.acknowledged_clearance_level,
+                ),
+            )
+        return False
 
 
 class OrganizationPermissionRequiredMixin(PermissionRequiredMixin):

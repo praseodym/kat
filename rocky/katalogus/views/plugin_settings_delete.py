@@ -4,7 +4,7 @@ from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import TemplateView
-from requests import RequestException
+from httpx import HTTPError, HTTPStatusError, codes
 
 from katalogus.views.mixins import SinglePluginView
 
@@ -26,10 +26,9 @@ class PluginSettingsDeleteView(OrganizationPermissionRequiredMixin, SinglePlugin
             },
             {
                 "url": reverse(
-                    "plugin_detail",
+                    "boefje_detail",
                     kwargs={
                         "organization_code": self.organization.code,
-                        "plugin_type": self.plugin.type,
                         "plugin_id": self.plugin.id,
                     },
                 ),
@@ -55,10 +54,9 @@ class PluginSettingsDeleteView(OrganizationPermissionRequiredMixin, SinglePlugin
 
     def get_success_url(self):
         return reverse(
-            "plugin_detail",
+            "boefje_detail",
             kwargs={
                 "organization_code": self.organization.code,
-                "plugin_type": self.plugin.type,
                 "plugin_id": self.plugin.id,
             },
         )
@@ -71,8 +69,8 @@ class PluginSettingsDeleteView(OrganizationPermissionRequiredMixin, SinglePlugin
                 messages.SUCCESS,
                 _("Settings for plugin {} successfully deleted.").format(self.plugin.name),
             )
-        except RequestException as e:
-            if e.response.status_code == 404:
+        except HTTPError as e:
+            if isinstance(e, HTTPStatusError) and e.response.status_code == codes.NOT_FOUND:
                 messages.add_message(
                     request,
                     messages.WARNING,
@@ -86,6 +84,5 @@ class PluginSettingsDeleteView(OrganizationPermissionRequiredMixin, SinglePlugin
                         self.plugin.name
                     ),
                 )
+        finally:
             return HttpResponseRedirect(self.get_success_url())
-
-        return HttpResponseRedirect(self.get_success_url())

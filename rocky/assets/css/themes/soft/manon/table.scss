@@ -1,0 +1,93 @@
+/* Table - Variables */
+
+:root {
+  /* Base */
+  --table-background-color: #ffffff;
+  --table-text-color: var(--application-base-text-color);
+  --table-text-align: left;
+
+  /* Table header */
+  --table-head-background-color: #ffffff;
+  --table-head-border-width: 0 0 2px 0;
+  --table-head-border-style: solid;
+  --table-head-border-color: var(--colors-purrple-6);
+
+  /* Table row */
+  --table-row-background-color-striping: transparent;
+
+  /* th */
+  --table-head-cell-font-size: 1rem;
+
+  /* Table body header */
+  --table-body-head-cell-border-width: 0;
+  --table-body-head-cell-background-color: transparent;
+
+  /* Table cell */
+  --table-cell-border-width: 0 0 1px 0;
+  --table-cell-border-style: solid;
+  --table-cell-border-color: #cccccc;
+  --table-cell-padding: 0.5rem 1rem;
+  --table-cells-padding: 0.25rem 1rem;
+
+  /* Actions */
+  --table-action-buttons-button-font-size: var(--icon-font-size);
+  --table-action-buttons-button-text-color: var(--link-text-color);
+  --table-action-buttons-button-hover-text-color: var(--link-text-color);
+
+  /* Table footer */
+  --table-foot-background-color: #ffffff;
+  --table-foot-font-weight: 600;
+  --table-foot-font-size: var(--table-font-size);
+  --table-foot-border-width: 2px 0 0 0;
+  --table-foot-border-color: var(--colors-purrple-6);
+}
+
+%tfoot-td-styling {
+  background-color: var(--table-foot-background-color);
+  border-bottom: 0;
+
+  a,
+  a:visited,
+  a:focus,
+  a:hover {
+    color: #000000;
+    text-decoration: none;
+  }
+}
+
+table {
+  td {
+    &.confirmation,
+    &.explanation,
+    &.error,
+    &.system,
+    &.warning {
+      border-width: 0 0 1px;
+    }
+  }
+
+  tfoot {
+    tr {
+      td {
+        @extend %tfoot-td-styling;
+      }
+
+      &:last-of-type td {
+        @extend %tfoot-td-styling;
+      }
+    }
+  }
+}
+
+/* Setting the width of table cells with an action button to the possible minimum width */
+table.action-buttons .actions {
+  width: 1px;
+
+  a,
+  a.button,
+  button {
+    &.icon::before {
+      font-weight: normal;
+    }
+  }
+}

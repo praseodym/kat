@@ -16,9 +16,9 @@
                 <strong>{% translate "Client account" %}</strong>
                 <p>
                     {% blocktranslate trimmed %}
-            A client account can access reports.
-            Adding a client account to the organization is optional.
-         {% endblocktranslate %}
+                        A client account can access reports.
+                        Adding a client account to the organization is optional.
+                    {% endblocktranslate %}
                 </p>
                 <form novalidate method="post" class="horizontal-view help">
                     {% csrf_token %}
@@ -29,10 +29,10 @@
                 </form>
                 {% if organization %}
                     <div class="button-container">
-                        <a href="{% url "step_account_setup_red_teamer" organization.code %}"
-                           class="button ghost">{% translate "Go back to previous step" %}</a>
                         <a href="{% url "complete_onboarding" organization.code %}"
                            class="button">{% translate "Finish organization setup" %}</a>
+                        <a href="{% url "step_account_setup_red_teamer" organization.code %}"
+                           class="button ghost">{% translate "Go back to previous step" %}</a>
                     </div>
                 {% endif %}
             </div>

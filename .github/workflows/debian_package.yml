@@ -1,13 +1,13 @@
 name: Debian packages
 
 on:
-  pull_request:
   push:
     branches:
-      - 'main'
-      - 'release-*'
+      - "main"
+      - "release-*"
     tags:
-      - '*'
+      - "*"
+  pull_request:
 
 jobs:
   changes:
@@ -15,31 +15,34 @@ jobs:
     outputs:
       packages: ${{ steps.filter.outputs.changes }}
     steps:
-    - uses: dorny/paths-filter@v2
-      if: github.event_name != 'push'
-      id: filter
-      with:
-        filters: |
-          boefjes:
-            - 'boefjes/**'
-            - 'octopoes/**'
-            - '.github/workflows/debian_package.yml'
-          bytes:
-            - 'bytes/**'
-            - '.github/workflows/debian_package.yml'
-          keiko:
-            - 'keiko/**'
-            - '.github/workflows/debian_package.yml'
-          mula:
-            - 'mula/**'
-            - '.github/workflows/debian_package.yml'
-          octopoes:
-            - 'octopoes/**'
-            - '.github/workflows/debian_package.yml'
-          rocky:
-            - 'rocky/**'
-            - 'octopoes/**'
-            - '.github/workflows/debian_package.yml'
+      - uses: dorny/paths-filter@v3
+        if: github.event_name != 'push'
+        id: filter
+        with:
+          filters: |
+            boefjes:
+              - 'boefjes/**'
+              - 'octopoes/**'
+              - '.github/workflows/debian_package.yml'
+            bytes:
+              - 'bytes/**'
+              - '.github/workflows/debian_package.yml'
+            cveapi:
+              - 'cveapi/**'
+              - '.github/workflows/debian_package.yml'
+            keiko:
+              - 'keiko/**'
+              - '.github/workflows/debian_package.yml'
+            mula:
+              - 'mula/**'
+              - '.github/workflows/debian_package.yml'
+            octopoes:
+              - 'octopoes/**'
+              - '.github/workflows/debian_package.yml'
+            rocky:
+              - 'rocky/**'
+              - 'octopoes/**'
+              - '.github/workflows/debian_package.yml'
 
   build:
     needs: changes
@@ -47,15 +50,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dist: [debian11, debian12, ubuntu22.04]
+        dist: [debian12, ubuntu22.04]
         # On main, release branches and tags we always want to build all the packages
-        package: ${{ github.event_name == 'push' && fromJSON('["boefjes", "bytes", "keiko", "mula", "octopoes", "rocky"]') || fromJSON(needs.changes.outputs.packages) }}
+        package: ${{ github.event_name == 'push' && fromJSON('["boefjes", "bytes", "cveapi", "keiko", "mula", "octopoes", "rocky"]') || fromJSON(needs.changes.outputs.packages) }}
+        exclude:
+          - package: cveapi
+            dist: ubuntu22.04
     runs-on: ubuntu-22.04
     env:
       PKG_NAME: kat-${{ matrix.package }}
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Generate version.py and set RELEASE_VERSION
         run: |
@@ -86,7 +92,7 @@ jobs:
             --workdir /app
 
       - name: Upload .deb to artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{env.PKG_NAME}}_${{ env.RELEASE_VERSION }}_${{ matrix.dist }}.deb
-          path: ${{matrix.package}}/build/${{env.PKG_NAME}}_${{ env.RELEASE_VERSION }}_amd64.deb
+          path: ${{matrix.package}}/build/${{env.PKG_NAME}}_${{ env.RELEASE_VERSION }}_${{ matrix.package == 'cveapi' && 'all' || 'amd64' }}.deb

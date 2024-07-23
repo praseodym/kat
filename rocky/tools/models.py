@@ -1,30 +1,27 @@
-import logging
+import datetime
+from collections.abc import Iterable
+from enum import Enum
 from functools import cached_property
-from typing import Iterable, Set
+from typing import cast
 
+import structlog
 import tagulous.models
 from django.conf import settings
 from django.contrib.auth.models import Group, Permission
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.db.models.signals import pre_save
+from django.db.models.signals import post_save, pre_save
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
+from httpx import HTTPError
 from katalogus.client import KATalogusClientV1, get_katalogus
-from katalogus.exceptions import (
-    KATalogusDownException,
-    KATalogusException,
-    KATalogusUnhealthyException,
-)
-from requests import RequestException
+from katalogus.exceptions import KATalogusDownException, KATalogusException, KATalogusUnhealthyException
 
+from octopoes.api.models import Declaration
 from octopoes.connector.octopoes import OctopoesAPIConnector
-from rocky.exceptions import (
-    OctopoesDownException,
-    OctopoesException,
-    OctopoesUnhealthyException,
-)
+from octopoes.models.ooi.web import Network
+from rocky.exceptions import OctopoesDownException, OctopoesException, OctopoesUnhealthyException
 from tools.add_ooi_information import SEPARATOR, get_info
 from tools.enums import SCAN_LEVEL
 from tools.fields import LowerCaseSlugField
@@ -33,7 +30,7 @@ GROUP_ADMIN = "admin"
 GROUP_REDTEAM = "redteam"
 GROUP_CLIENT = "clients"
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 ORGANIZATION_CODE_LENGTH = 32
 DENY_ORGANIZATION_CODES = [
@@ -62,7 +59,6 @@ DENY_ORGANIZATION_CODES = [
     "keiko",
     "octopoes",
     "rocky",
-    "fmea",
 ]
 
 
@@ -128,8 +124,8 @@ class Organization(models.Model):
         except Exception as e:
             try:
                 octopoes_client.create_node()
-            except Exception as e:
-                raise OctopoesException("Failed creating organization in Octopoes") from e
+            except Exception as second_exception:
+                raise OctopoesException("Failed creating organization in Octopoes") from second_exception
 
             raise KATalogusException("Failed deleting organization in the Katalogus") from e
 
@@ -163,10 +159,20 @@ class Organization(models.Model):
         except Exception as e:
             try:
                 katalogus_client.delete_organization()
-            except Exception as e:
-                raise KATalogusException("Failed deleting organization in the Katalogus") from e
+            except Exception as second_exception:
+                raise KATalogusException("Failed deleting organization in the Katalogus") from second_exception
 
             raise OctopoesException("Failed creating organization in Octopoes") from e
+
+    @classmethod
+    def post_create(cls, sender, instance, *args, **kwargs):
+        octopoes_client = cls._get_healthy_octopoes(instance.code)
+
+        try:
+            valid_time = datetime.datetime.now(datetime.timezone.utc)
+            octopoes_client.save_declaration(Declaration(ooi=Network(name="internet"), valid_time=valid_time))
+        except Exception:
+            logger.exception("Could not seed internet for organization %s", sender)
 
     @staticmethod
     def _get_healthy_katalogus(organization_code: str) -> KATalogusClientV1:
@@ -174,7 +180,7 @@ class Organization(models.Model):
 
         try:
             health = katalogus_client.health()
-        except RequestException as e:
+        except HTTPError as e:
             raise KATalogusDownException from e
 
         if not health.healthy:
@@ -187,7 +193,7 @@ class Organization(models.Model):
         octopoes_client = OctopoesAPIConnector(settings.OCTOPOES_API, client=organization_code)
         try:
             health = octopoes_client.root_health()
-        except RequestException as e:
+        except HTTPError as e:
             raise OctopoesDownException from e
 
         if not health.healthy:
@@ -197,6 +203,7 @@ class Organization(models.Model):
 
 
 pre_save.connect(Organization.pre_create, sender=Organization)
+post_save.connect(Organization.post_create, sender=Organization)
 
 
 class OrganizationMember(models.Model):
@@ -207,7 +214,7 @@ class OrganizationMember(models.Model):
         ACTIVE = "active", _("active")
         NEW = "new", _("new")
 
-    scan_levels = [scan_level.value for scan_level in SCAN_LEVEL]
+    scan_levels = [scan_level.value for scan_level in cast(type[Enum], SCAN_LEVEL)]
 
     user = models.ForeignKey("account.KATUser", on_delete=models.PROTECT, related_name="members")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="members")
@@ -223,19 +230,7 @@ class OrganizationMember(models.Model):
     )
 
     @cached_property
-    def is_admin(self) -> bool:
-        return self.groups.filter(name=GROUP_ADMIN).exists()
-
-    @cached_property
-    def is_redteam(self) -> bool:
-        return self.groups.filter(name=GROUP_REDTEAM).exists()
-
-    @cached_property
-    def is_client(self) -> bool:
-        return self.groups.filter(name=GROUP_CLIENT).exists()
-
-    @cached_property
-    def all_permissions(self) -> Set[str]:
+    def all_permissions(self) -> set[str]:
         if self.user.is_active and self.user.is_superuser:
             # Superuser always has all permissions
             return {

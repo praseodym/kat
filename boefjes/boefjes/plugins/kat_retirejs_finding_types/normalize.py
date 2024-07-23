@@ -1,10 +1,9 @@
 import hashlib
 import json
 import logging
-from typing import Dict, Iterable, List, Union
+from collections.abc import Iterable
 
-from boefjes.job_models import NormalizerMeta
-from octopoes.models import OOI
+from boefjes.job_models import NormalizerAffirmation, NormalizerOutput
 from octopoes.models.ooi.findings import RetireJSFindingType, RiskLevelSeverity
 
 logger = logging.getLogger(__name__)
@@ -19,7 +18,7 @@ SEVERITY_SCORE_LOOKUP = {
 }
 
 
-def _hash_identifiers(identifiers: Dict[str, Union[str, List[str]]]) -> str:
+def _hash_identifiers(identifiers: dict[str, str | list[str]]) -> str:
     pre_hash = ""
     for identifier in identifiers.values():
         pre_hash += "".join(identifier)
@@ -42,8 +41,8 @@ def _create_description(finding: dict) -> str:
     return description
 
 
-def run(normalizer_meta: NormalizerMeta, raw: Union[bytes, str]) -> Iterable[OOI]:
-    retirejs_finding_type_id = normalizer_meta.raw_data.boefje_meta.arguments["input"]["id"]
+def run(input_ooi: dict, raw: bytes) -> Iterable[NormalizerOutput]:
+    retirejs_finding_type_id = input_ooi["id"]
     data = json.loads(raw)
 
     _, name, hashed_id = retirejs_finding_type_id.split("-")
@@ -63,9 +62,11 @@ def run(normalizer_meta: NormalizerMeta, raw: Union[bytes, str]) -> Iterable[OOI
     risk_severity = RiskLevelSeverity(finding[0]["severity"].lower())
     risk_score = SEVERITY_SCORE_LOOKUP[risk_severity]
 
-    yield RetireJSFindingType(
-        id=retirejs_finding_type_id,
-        description=_create_description(finding[0]),
-        risk_severity=risk_severity,
-        risk_score=risk_score,
+    yield NormalizerAffirmation(
+        ooi=RetireJSFindingType(
+            id=retirejs_finding_type_id,
+            description=_create_description(finding[0]),
+            risk_severity=risk_severity,
+            risk_score=risk_score,
+        )
     )

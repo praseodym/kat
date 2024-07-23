@@ -1,17 +1,17 @@
-"""Boefje script for getting domaions and ipaddresses from dadb"""
+"""Boefje script for getting domains and ipaddresses from dadb"""
+
 from os import getenv
-from typing import List, Tuple, Union
 
 import requests
 
 from boefjes.job_models import BoefjeMeta
 
 
-def run(boefje_meta: BoefjeMeta) -> List[Tuple[set, Union[bytes, str]]]:
+def run(boefje_meta: BoefjeMeta) -> list[tuple[set, bytes | str]]:
     """Fetch external database response."""
     api_format = getenv(
         "DB_ENDPOINT_FORMAT",
-        "{DB_URL}/api/v1/participants/assets/{DB_ORGANIZATION_IDENTIFIER}?access_token={DB_ACCESS_TOKEN}",
+        "{DB_URL}/api/v1/organizations/assets/{DB_ORGANIZATION_IDENTIFIER}?access_token={DB_ACCESS_TOKEN}",
     )
     request_timeout = 100
 

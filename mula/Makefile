@@ -21,7 +21,7 @@ export file
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
 
-ci-docker-compose := docker-compose -f base.yml  -f .ci/docker-compose.yml
+ci-docker-compose := docker compose --project-directory . -f .ci/docker-compose.yml
 
 ##
 ##+------------------------------------------------------------------------+
@@ -41,19 +41,19 @@ check: ## Check the code style using black, mypy and pylint.
 	make pylint
 
 mypy: ## Check code style using mypy.
-	docker-compose run --rm scheduler \
+	docker compose run --rm scheduler \
 		python -m mypy --cache-dir /home/scheduler/.mypy_cache /app/scheduler/scheduler
 
 black: ## Check code style with black.
-	docker-compose run --rm scheduler \
+	docker compose run --rm scheduler \
 		black --check --diff .
 
 pylint: ## Rate the code with pylint.
-	docker-compsoe run --rm scheduler \
+	$(ci-docker-compose) run --rm ci_scheduler_unit \
 		pylint --rcfile pyproject.toml scheduler
 
 fmt: ## Format the code using black.
-	docker-compose run --rm scheduler \
+	docker compose run --rm scheduler \
 		black .
 
 done: ## Prepare for a commit.
@@ -62,7 +62,7 @@ done: ## Prepare for a commit.
 	make test
 
 cov: ## Generate a test coverage report
-	docker-compose run --rm scheduler \
+	$(ci-docker-compose) run --rm ci_scheduler_integration \
 		python -m pytest \
 		--cov-report term-missing:skip-covered \
 		--cov=scheduler tests/
@@ -73,7 +73,7 @@ cov: ## Generate a test coverage report
 ##+------------------------------------------------------------------------+
 
 sql: ## Generate raw sql for the migrations.
-	docker-compose run --rm scheduler \
+	docker compose run --rm scheduler \
 		alembic --config /app/scheduler/scheduler/alembic.ini \
 		upgrade $(rev1):$(rev2) --sql
 
@@ -83,14 +83,14 @@ ifeq ($(m),)
 else ifeq ($(revid),)
 	$(HIDE) (echo "ERROR: Specify a message with m={message} and a rev-id with revid={revid} (e.g. 0001 etc.)"; exit 1)
 else
-	docker-compose run --rm scheduler \
+	docker compose run --rm scheduler \
 		alembic --config /app/scheduler/scheduler/alembic.ini \
 		revision --autogenerate \
 		-m "$(m)" --rev-id "$(revid)"
 endif
 
 migrate: ## Run migrations using alembic.
-	docker-compose run scheduler \
+	docker compose run scheduler \
 		alembic --config /app/scheduler/scheduler/alembic.ini \
 		upgrade head
 
@@ -123,19 +123,6 @@ test: ## Run all tests.
 ##+------------------------------------------------------------------------+
 ##| Building                                                               |
 ##+------------------------------------------------------------------------+
-debian11:
-	mkdir -p build
-	docker run --rm \
-	--env PKG_NAME=kat-mula \
-	--env BUILD_DIR=./build \
-	--env REPOSITORY=minvws/nl-kat-mula \
-	--env RELEASE_VERSION=${RELEASE_VERSION} \
-	--env RELEASE_TAG=${RELEASE_TAG} \
-	--mount type=bind,src=${CURDIR},dst=/app \
-	--workdir /app \
-	kat-debian11-build-image \
-	packaging/scripts/build-debian-package.sh
-
 debian12:
 	mkdir -p build
 	docker run --rm \

@@ -2,7 +2,7 @@ import sys
 from datetime import datetime, timezone
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -10,7 +10,7 @@ from django.core.management import BaseCommand
 
 from octopoes.connector.octopoes import OctopoesAPIConnector
 from octopoes.models.ooi.findings import RiskLevelSeverity
-from rocky.keiko import ReportsService, keiko_client
+from rocky.keiko import FindingReportQuery, ReportsService, keiko_client
 from rocky.views.finding_list import generate_findings_metadata
 from rocky.views.mixins import FindingList
 from tools.models import Organization
@@ -53,6 +53,7 @@ class Command(BaseCommand):
             sys.exit(1)
 
         organization = self.get_organization(**options)
+        severities = [severity for severity in RiskLevelSeverity if severity >= options["min_severity"]]
 
         if not organization:
             self.stderr.write("Provider either a valid primary key of an organization or a valid code (not both)")
@@ -62,7 +63,8 @@ class Command(BaseCommand):
         report = ReportsService(keiko_client).get_organization_finding_report(
             valid_time,
             organization.name,
-            self.get_findings_metadata(organization, valid_time, options),
+            self.get_findings_metadata(organization, valid_time, severities),
+            FindingReportQuery(organization.code, valid_time.date(), severities),
         )
 
         if options["output"]:
@@ -73,8 +75,7 @@ class Command(BaseCommand):
         self.stdout.buffer.write(report.read())
 
     @staticmethod
-    def get_findings_metadata(organization, valid_time, options) -> List[Dict[str, Any]]:
-        severities = [severity for severity in RiskLevelSeverity if severity >= options["min_severity"]]
+    def get_findings_metadata(organization, valid_time, severities) -> list[dict[str, Any]]:
         findings = FindingList(
             OctopoesAPIConnector(settings.OCTOPOES_API, organization.code),
             valid_time,
@@ -84,7 +85,7 @@ class Command(BaseCommand):
         return generate_findings_metadata(findings, severities)
 
     @staticmethod
-    def get_organization(**options) -> Optional[Organization]:
+    def get_organization(**options) -> Organization | None:
         if options["code"] and options["id"]:
             return None
 
@@ -93,3 +94,5 @@ class Command(BaseCommand):
 
         if options["id"]:
             return Organization.objects.get(pk=options["id"])
+
+        return None

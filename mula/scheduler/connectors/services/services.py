@@ -1,9 +1,10 @@
-import logging
 import urllib.parse
-from typing import Any, Dict, Optional
+from collections.abc import MutableMapping
+from typing import Any
 
-import requests
-from requests.adapters import HTTPAdapter, Retry
+import httpx
+import structlog
+from httpx import HTTPError, HTTPTransport, Limits
 
 from ..connector import Connector  # noqa: TID252
 
@@ -16,7 +17,7 @@ class HTTPService(Connector):
         logger:
             The logger for the class.
         session:
-            A requests.Session object.
+            A httpx.Client object.
         name:
             A string describing the name of the service. This is used args
             an identifier.
@@ -35,10 +36,17 @@ class HTTPService(Connector):
             An integer defining the timeout of requests.
     """
 
-    name: Optional[str] = None
-    health_endpoint: Optional[str] = "/health"
+    name: str | None = None
+    health_endpoint: str | None = "health"
 
-    def __init__(self, host: str, source: str, timeout: int = 5, retries: int = 5):
+    def __init__(
+        self,
+        host: str,
+        source: str,
+        timeout: int = 10,
+        pool_connections: int = 10,
+        retries: int = 5,
+    ):
         """Initializer of the HTTPService class. During initialization the
         host will be checked if it is available and healthy.
 
@@ -51,49 +59,38 @@ class HTTPService(Connector):
                 from where the requests came from.
             timeout:
                 An integer defining the timeout of requests.
+            pool_connections:
+                The number of connections kept alive in the pool.
             retries:
                 An integer defining the number of retries to make before
                 giving up.
         """
         super().__init__()
 
-        self.logger: logging.Logger = logging.getLogger(self.__class__.__name__)
-        self.session: requests.Session = requests.Session()
+        self.logger: structlog.BoundLogger = structlog.getLogger(self.__class__.__name__)
         self.host: str = host
         self.timeout: int = timeout
-        self.retries = retries
+        self.retries: int = retries
+        self.pool_connections: int = pool_connections
+        transport = HTTPTransport(retries=self.retries, limits=Limits(max_connections=self.pool_connections))
+        self.session = httpx.Client(transport=transport, timeout=self.timeout)
         self.source: str = source
 
-        max_retries = Retry(
-            total=self.retries,
-            backoff_factor=0.1,
-            status_forcelist=[500, 502, 503, 504],
-        )
-        self.session.mount("http://", HTTPAdapter(max_retries=max_retries))
-        self.session.mount("https://", HTTPAdapter(max_retries=max_retries))
-
-        self.headers: Dict[str, str] = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-
         if self.source:
-            self.headers["User-Agent"] = self.source
+            self.session.headers["User-Agent"] = self.source
 
         self._do_checks()
 
     def get(
         self,
         url: str,
-        payload: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, Any]] = None,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> requests.Response:
+        params: dict[str, Any] | None = None,
+    ) -> httpx.Response:
         """Execute a HTTP GET request
 
         Args:
-            headers:
-                A dict to set additional headers for the request.
+            url:
+                A string url formatted reference to the host of the service
             params:
                 A dict to set the query parameters for the request
 
@@ -102,16 +99,15 @@ class HTTPService(Connector):
         """
         response = self.session.get(
             url,
-            headers=self.headers.update(headers) if headers else self.headers,
+            headers=self.headers,
             params=params,
-            data=payload,
             timeout=self.timeout,
         )
         self.logger.debug(
-            "Made GET request to %s. [name=%s, url=%s]",
+            "Made GET request to %s.",
             url,
-            self.name,
-            url,
+            name=self.name,
+            url=url,
         )
 
         return response
@@ -119,10 +115,9 @@ class HTTPService(Connector):
     def post(
         self,
         url: str,
-        payload: Dict[str, Any],
-        headers: Optional[Dict[str, Any]] = None,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> requests.Response:
+        payload: dict[str, Any],
+        params: dict[str, Any] | None = None,
+    ) -> httpx.Response:
         """Execute a HTTP POST request
 
         Args:
@@ -136,25 +131,33 @@ class HTTPService(Connector):
         """
         response = self.session.post(
             url,
-            headers=self.headers.update(headers) if headers else self.headers,
+            headers=self.headers,
             params=params,
             data=payload,
             timeout=self.timeout,
         )
         self.logger.debug(
-            "Made POST request to %s. [name=%s, url=%s, data=%s]",
+            "Made POST request to %s.",
             url,
-            self.name,
-            url,
-            payload,
+            name=self.name,
+            url=url,
+            payload=payload,
         )
 
         self._verify_response(response)
 
         return response
 
+    @property
+    def headers(self) -> MutableMapping[str, str]:
+        return self.session.headers
+
     def _do_checks(self) -> None:
         """Do checks whether a host is available and healthy."""
+        if not self.host:
+            self.logger.warning("No host defined for service %s", self.name)
+            return
+
         parsed_url = urllib.parse.urlparse(self.host)
         hostname, port = parsed_url.hostname, parsed_url.port
 
@@ -163,16 +166,19 @@ class HTTPService(Connector):
 
         if hostname is None or port is None:
             self.logger.warning(
-                "Not able to parse hostname and port from %s [host=%s]",
+                "Not able to parse hostname and port from %s",
                 self.host,
-                self.host,
+                host=self.host,
             )
             return
 
         if self.host is not None and self.retry(self.is_host_available, hostname, port) is False:
             raise RuntimeError(f"Host {self.host} is not available.")
 
-        if self.health_endpoint is not None and self.retry(self.is_healthy) is False:
+        if (
+            self.health_endpoint is not None
+            and self.retry(self.is_host_healthy, self.host, self.health_endpoint) is False
+        ):
             raise RuntimeError(f"Service {self.name} is not running.")
 
     def is_healthy(self) -> bool:
@@ -191,7 +197,7 @@ class HTTPService(Connector):
 
         return self.is_host_healthy(self.host, self.health_endpoint)
 
-    def _verify_response(self, response: requests.Response) -> None:
+    def _verify_response(self, response: httpx.Response) -> None:
         """Verify the received response from a request.
 
         Raises:
@@ -199,12 +205,12 @@ class HTTPService(Connector):
         """
         try:
             response.raise_for_status()
-        except requests.exceptions.HTTPError as e:
+        except HTTPError as e:
             self.logger.error(
-                "Received bad response from %s. [name=%s, url=%s, response=%s]",
+                "Received bad response from %s.",
                 response.url,
-                self.name,
-                response.url,
-                str(response.content),
+                name=self.name,
+                url=response.url,
+                response=str(response.content),
             )
             raise e

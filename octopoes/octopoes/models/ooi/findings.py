@@ -1,13 +1,21 @@
 from enum import Enum
 from functools import total_ordering
-from typing import Literal, Optional
+from typing import Annotated, Literal
 
-from pydantic import AnyUrl
+from pydantic import AnyUrl, StringConstraints
 
 from octopoes.models import OOI, Reference
 from octopoes.models.persistence import ReferenceField
 
-severity_order = ["unknown", "pending", "recommendation", "low", "medium", "high", "critical"]
+severity_order = [
+    "unknown",
+    "pending",
+    "recommendation",
+    "low",
+    "medium",
+    "high",
+    "critical",
+]
 
 
 @total_ordering
@@ -34,13 +42,13 @@ class RiskLevelSeverity(Enum):
 class FindingType(OOI):
     id: str
 
-    description: Optional[str]
-    source: Optional[AnyUrl]
-    impact: Optional[str]
-    recommendation: Optional[str]
+    description: str | None = None
+    source: AnyUrl | None = None
+    impact: str | None = None
+    recommendation: str | None = None
 
-    risk_score: Optional[float]
-    risk_severity: Optional[RiskLevelSeverity]
+    risk_score: float | None = None
+    risk_severity: RiskLevelSeverity | None = None
 
     _natural_key_attrs = ["id"]
     _traversable = False
@@ -57,13 +65,19 @@ class ADRFindingType(FindingType):
 class CVEFindingType(FindingType):
     object_type: Literal["CVEFindingType"] = "CVEFindingType"
 
+    id: Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True)]
+
 
 class CWEFindingType(FindingType):
     object_type: Literal["CWEFindingType"] = "CWEFindingType"
 
+    id: Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True)]
+
 
 class CAPECFindingType(FindingType):
     object_type: Literal["CAPECFindingType"] = "CAPECFindingType"
+
+    id: Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True)]
 
 
 class RetireJSFindingType(FindingType):
@@ -72,6 +86,8 @@ class RetireJSFindingType(FindingType):
 
 class SnykFindingType(FindingType):
     object_type: Literal["SnykFindingType"] = "SnykFindingType"
+
+    id: Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True)]
 
 
 class KATFindingType(FindingType):
@@ -83,9 +99,9 @@ class Finding(OOI):
 
     finding_type: Reference = ReferenceField(FindingType)
     ooi: Reference = ReferenceField(OOI)
-    proof: Optional[str]
-    description: Optional[str]
-    reproduce: Optional[str]
+    proof: str | None = None
+    description: str | None = None
+    reproduce: str | None = None
 
     @property
     def natural_key(self) -> str:
@@ -105,7 +121,7 @@ class MutedFinding(OOI):
     object_type: Literal["MutedFinding"] = "MutedFinding"
 
     finding: Reference = ReferenceField(Finding)
-    reason: Optional[str]
+    reason: str | None = None
 
     _natural_key_attrs = ["finding"]
     _reverse_relation_names = {"finding": "mutes"}

@@ -5,10 +5,11 @@ from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import TemplateView
 
-from katalogus.views.mixins import BoefjeMixin, SinglePluginView
+from katalogus.views.mixins import SinglePluginView
+from rocky.views.scheduler import SchedulerView
 
 
-class ChangeClearanceLevel(OrganizationPermissionRequiredMixin, BoefjeMixin, SinglePluginView, TemplateView):
+class ChangeClearanceLevel(OrganizationPermissionRequiredMixin, SchedulerView, SinglePluginView, TemplateView):
     template_name = "change_clearance_level.html"
     permission_required = "tools.can_set_clearance_level"
 
@@ -20,14 +21,15 @@ class ChangeClearanceLevel(OrganizationPermissionRequiredMixin, BoefjeMixin, Sin
 
     def get(self, request, *args, **kwargs):
         if "selected_oois" not in request.session:
-            messages.add_message(self.request, messages.ERROR, _("Session has terminated, please select OOIs again."))
+            messages.add_message(
+                self.request, messages.ERROR, _("Session has terminated, please select objects again.")
+            )
             return redirect(
                 reverse(
-                    "plugin_detail",
+                    "boefje_detail",
                     kwargs={
                         "organization_code": self.organization.code,
                         "plugin_id": kwargs["plugin_id"],
-                        "plugin_type": kwargs["plugin_type"],
                     },
                 )
             )
@@ -39,7 +41,7 @@ class ChangeClearanceLevel(OrganizationPermissionRequiredMixin, BoefjeMixin, Sin
             return self.get(request, *args, **kwargs)
 
         self.run_boefje_for_oois(boefje=self.plugin, oois=self.oois)
-        messages.add_message(self.request, messages.SUCCESS, _("Scanning successfully scheduled."))
+
         del request.session["selected_oois"]  # delete session
         return redirect(reverse("task_list", kwargs={"organization_code": self.organization.code}))
 
@@ -48,7 +50,7 @@ class ChangeClearanceLevel(OrganizationPermissionRequiredMixin, BoefjeMixin, Sin
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["plugin"] = self.plugin.dict()
+        context["plugin"] = self.plugin.model_dump()
         context["oois"] = self.oois
         context["breadcrumbs"] = [
             {
@@ -57,10 +59,9 @@ class ChangeClearanceLevel(OrganizationPermissionRequiredMixin, BoefjeMixin, Sin
             },
             {
                 "url": reverse(
-                    "plugin_detail",
+                    "boefje_detail",
                     kwargs={
                         "organization_code": self.organization.code,
-                        "plugin_type": self.plugin.type,
                         "plugin_id": self.plugin.id,
                     },
                 ),

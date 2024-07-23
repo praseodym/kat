@@ -1,91 +1,138 @@
+from datetime import datetime, timezone
 from time import sleep
-from typing import List, Type
 
+from django import forms
+from django.http import Http404
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
-from django.views.generic import ListView, TemplateView
+from django.views.generic import ListView
 from django.views.generic.edit import FormView
 from pydantic import ValidationError
 from tools.forms.base import BaseRockyForm, ObservedAtForm
-from tools.forms.settings import CLEARANCE_TYPE_CHOICES
-from tools.models import SCAN_LEVEL
-from tools.ooi_form import ClearanceFilterForm, OOIForm
+from tools.forms.ooi_form import _EXCLUDED_OOI_TYPES, ClearanceFilterForm, OOIForm
 from tools.ooi_helpers import create_ooi
 from tools.view_helpers import Breadcrumb, BreadcrumbsMixin, get_mandatory_fields, get_ooi_url
 
 from octopoes.config.settings import DEFAULT_SCAN_LEVEL_FILTER, DEFAULT_SCAN_PROFILE_TYPE_FILTER
 from octopoes.models import OOI, ScanLevel, ScanProfileType
 from octopoes.models.ooi.findings import Finding, FindingType
-from octopoes.models.types import get_collapsed_types
-from rocky.views.mixins import (
-    ConnectorFormMixin,
-    MultipleOOIMixin,
-    OOIList,
-    SingleOOIMixin,
-    SingleOOITreeMixin,
-)
+from octopoes.models.types import get_collapsed_types, type_by_name
+from rocky.paginator import RockyPaginator
+from rocky.views.mixins import ConnectorFormMixin, OctopoesView, OOIList, SingleOOIMixin, SingleOOITreeMixin
 
 
-class BaseOOIListView(MultipleOOIMixin, ConnectorFormMixin, ListView):
+class OOIFilterView(ConnectorFormMixin, OctopoesView):
+    """
+    Shows filter options with different filter forms and handles filter requests for OOIs.
+    """
+
     connector_form_class = ObservedAtForm
-    paginate_by = 150
-    context_object_name = "ooi_list"
     ooi_types = get_collapsed_types().difference({Finding, FindingType})
+    scan_levels = DEFAULT_SCAN_LEVEL_FILTER
+    scan_profile_types = DEFAULT_SCAN_PROFILE_TYPE_FILTER
 
     def setup(self, request, *args, **kwargs):
         super().setup(request, *args, **kwargs)
-        self.filtered_ooi_types = self.get_filtered_ooi_types()
+        self.filtered_ooi_types = request.GET.getlist("ooi_type", [])
+        self.clearance_levels = request.GET.getlist("clearance_level", [])
+        self.clearance_types = request.GET.getlist("clearance_type", [])
+
+    def get_active_filters(self) -> dict[str, str]:
+        active_filters = {}
+        if self.filtered_ooi_types:
+            active_filters[_("OOI types: ")] = ", ".join(self.filtered_ooi_types)
+        if self.clearance_levels:
+            clearance_level = ["L" + str(cl) for cl in self.clearance_levels]
+            active_filters[_("Clearance level: ")] = ", ".join(clearance_level)
+        if self.clearance_types:
+            active_filters[_("Clearance type: ")] = ", ".join(self.clearance_types)
+        return active_filters
+
+    def get_ooi_scan_levels(self) -> set[ScanLevel]:
+        if not self.clearance_levels:
+            return self.scan_levels
+        return {ScanLevel(int(cl)) for cl in self.clearance_levels}
+
+    def get_ooi_profile_types(self) -> set[ScanProfileType]:
+        if not self.clearance_types:
+            return self.scan_profile_types
+        return {ScanProfileType(ct) for ct in self.clearance_types}
+
+    def get_ooi_types(self) -> set[type[OOI]]:
+        if not self.filtered_ooi_types:
+            return self.ooi_types
+        return {type_by_name(t) for t in self.filtered_ooi_types if t not in _EXCLUDED_OOI_TYPES}
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["observed_at"] = self.observed_at
+        context["observed_at_form"] = self.get_connector_form()
+
+        context["ooi_types_selection"] = self.filtered_ooi_types
+
+        context["clearance_levels_selection"] = self.clearance_levels
+        context["clearance_level_filter_form"] = ClearanceFilterForm(self.request.GET)
+
+        context["clearance_types_selection"] = self.clearance_types
+
+        context["active_filters"] = self.get_active_filters()
+        return context
+
+
+class BaseOOIListView(OOIFilterView, ListView):
+    paginate_by = 150
+    context_object_name = "ooi_list"
+    paginator = RockyPaginator
 
     def get_queryset(self) -> OOIList:
-        scan_levels = DEFAULT_SCAN_LEVEL_FILTER
-        selected_clearance_level = self.request.GET.getlist("clearance_level")
-        if selected_clearance_level is not None:
-            scan_levels = {ScanLevel(int(s)) for s in selected_clearance_level}
-
-        scan_profile_types = DEFAULT_SCAN_PROFILE_TYPE_FILTER
-        selected_clearance_type = self.request.GET.getlist("clearance_type")
-        if selected_clearance_type is not None:
-            scan_profile_types = {ScanProfileType(s) for s in selected_clearance_type}
-
-        return self.get_list(self.get_observed_at(), scan_level=scan_levels, scan_profile_type=scan_profile_types)
+        return OOIList(
+            self.octopoes_api_connector,
+            ooi_types=self.get_ooi_types(),
+            valid_time=self.observed_at,
+            scan_level=self.get_ooi_scan_levels(),
+            scan_profile_type=self.get_ooi_profile_types(),
+        )
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["mandatory_fields"] = get_mandatory_fields(self.request)
-        context["observed_at_form"] = self.get_connector_form()
-        context["observed_at"] = self.get_observed_at()
         context["total_oois"] = len(self.object_list)
-
-        selected_clearance_levels = self.request.GET.getlist("clearance_level")
-        if not selected_clearance_levels:
-            selected_clearance_levels = [choice for choice, _ in SCAN_LEVEL.choices]
-        selected_clearance_types = self.request.GET.getlist("clearance_type")
-        if not selected_clearance_types:
-            selected_clearance_types = [choice for choice, _ in CLEARANCE_TYPE_CHOICES]
-
-        context["clearance_level_filter_form"] = ClearanceFilterForm(
-            selected_clearance_levels, selected_clearance_types
-        )
-
         return context
 
 
-class BaseOOIDetailView(SingleOOITreeMixin, BreadcrumbsMixin, ConnectorFormMixin, TemplateView):
-    def get(self, request, *args, **kwargs):
+class BaseOOIDetailView(BreadcrumbsMixin, SingleOOITreeMixin, ConnectorFormMixin):
+    connector_form_class = ObservedAtForm
+
+    def setup(self, request, *args, **kwargs):
+        super().setup(request, *args, **kwargs)
         self.ooi = self.get_ooi()
-        return super().get(request, *args, **kwargs)
+
+    def get_current_ooi(self) -> OOI | None:
+        """
+        Some OOIs have an old valid time, this will fetch the latest OOI for today.
+        """
+        now = datetime.now(timezone.utc)
+        if self.observed_at.date() == now.date():
+            return self.ooi
+        try:
+            return self.get_ooi(pk=self.get_ooi_id(), observed_at=now)
+        except Http404:
+            return None
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
         context["ooi"] = self.ooi
+        context["ooi_current"] = self.get_current_ooi()
         context["mandatory_fields"] = get_mandatory_fields(self.request)
-        context["observed_at"] = self.get_observed_at()
+        context["observed_at"] = self.observed_at
+        context["observed_at_form"] = self.get_connector_form()
 
         return context
 
-    def build_breadcrumbs(self) -> List[Breadcrumb]:
+    def build_breadcrumbs(self) -> list[Breadcrumb]:
+        start: Breadcrumb
         if isinstance(self.ooi, Finding):
             start = {
                 "url": reverse("finding_list", kwargs={"organization_code": self.organization.code}),
@@ -106,18 +153,14 @@ class BaseOOIDetailView(SingleOOITreeMixin, BreadcrumbsMixin, ConnectorFormMixin
 
 
 class BaseOOIFormView(SingleOOIMixin, FormView):
-    ooi_class: Type[OOI] = None
-    form_class = OOIForm
+    ooi_class: type[OOI]
+    form_class: forms.Form = OOIForm
 
     def get_ooi_class(self):
         return self.ooi.__class__ if hasattr(self, "ooi") else None
 
     def get_form(self, form_class=None) -> BaseRockyForm:
-        if form_class is None:
-            form_class = self.get_form_class()
-
-        kwargs = self.get_form_kwargs()
-        form = form_class(**kwargs)
+        form = super().get_form(form_class)
 
         # Disable natural key attributes
         if self.get_readonly_fields():
@@ -139,7 +182,12 @@ class BaseOOIFormView(SingleOOIMixin, FormView):
         # Transform into OOI
         try:
             new_ooi = self.ooi_class.parse_obj(form.cleaned_data)
-            create_ooi(self.octopoes_api_connector, self.bytes_client, new_ooi)
+            create_ooi(
+                self.octopoes_api_connector,
+                self.bytes_client,
+                new_ooi,
+                datetime.now(timezone.utc),
+            )
             sleep(1)
             return redirect(self.get_ooi_success_url(new_ooi))
         except ValidationError as exception:
@@ -153,7 +201,7 @@ class BaseOOIFormView(SingleOOIMixin, FormView):
     def get_ooi_success_url(self, ooi: OOI) -> str:
         return get_ooi_url("ooi_detail", ooi.primary_key, self.organization.code)
 
-    def get_readonly_fields(self) -> List:
+    def get_readonly_fields(self) -> list:
         if not hasattr(self, "ooi"):
             return []
 

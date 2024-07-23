@@ -1,7 +1,7 @@
 import csv
 import io
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Dict
+from typing import Any, ClassVar
 from uuid import uuid4
 
 from account.mixins import OrganizationPermissionRequiredMixin, OrganizationView
@@ -12,7 +12,8 @@ from django.urls.base import reverse_lazy
 from django.utils.translation import gettext as _
 from django.views.generic.edit import FormView
 from pydantic import ValidationError
-from tools.forms.upload_csv import CSV_ERRORS, UploadCSVForm
+from tools.forms.upload_csv import CSV_ERRORS
+from tools.forms.upload_oois import UploadOOICSVForm
 
 from octopoes.api.models import Declaration
 from octopoes.models import Reference
@@ -35,15 +36,21 @@ CSV_CRITERIA = [
         "For IPAddressV4 and IPAddressV6 object types, a column of 'address' is required, optionally a second column "
         "'network' is supported "
     ),
+    _(
+        "Clearance levels can be controlled by a column 'clearance' taking numerical values 0, 1, 2, 3, and 4 for "
+        "the corresponding clearance level (other values are ignored) "
+    ),
 ]
+
+CLEARANCE_VALUES = ["0", "1", "2", "3", "4"]
 
 
 class UploadCSV(OrganizationPermissionRequiredMixin, OrganizationView, FormView):
     template_name = "upload_csv.html"
-    form_class = UploadCSVForm
+    form_class = UploadOOICSVForm
     permission_required = "tools.can_scan_organization"
-    reference_cache: Dict[str, Any] = {"Network": {"internet": Network(name="internet")}}
-    ooi_types: ClassVar[Dict[str, Any]] = {
+    reference_cache: dict[str, Any] = {"Network": {"internet": Network(name="internet")}}
+    ooi_types: ClassVar[dict[str, Any]] = {
         "Hostname": {"type": Hostname},
         "URL": {"type": URL},
         "Network": {"type": Network, "default": "internet", "argument": "name"},
@@ -72,7 +79,7 @@ class UploadCSV(OrganizationPermissionRequiredMixin, OrganizationView, FormView)
         context["criteria"] = CSV_CRITERIA
         return context
 
-    def get_or_create_reference(self, ooi_type_name: str, value: str):
+    def get_or_create_reference(self, ooi_type_name: str, value: str | None):
         ooi_type_name = next(filter(lambda x: x.casefold() == ooi_type_name.casefold(), self.ooi_types.keys()))
 
         # get from cache
@@ -93,10 +100,12 @@ class UploadCSV(OrganizationPermissionRequiredMixin, OrganizationView, FormView)
 
         return ooi
 
-    def get_ooi_from_csv(self, ooi_type_name: str, values: Dict[str, str]):
+    def get_ooi_from_csv(self, ooi_type_name: str, values: dict[str, str]):
+        key = "clearance"
+        level = int(values[key]) if key in values and values[key] in CLEARANCE_VALUES else None
         ooi_type = self.ooi_types[ooi_type_name]["type"]
         ooi_fields = [
-            (field, model_field.type_ == Reference, model_field.required)
+            (field, model_field.annotation == Reference, model_field.is_required())
             for field, model_field in ooi_type.__fields__.items()
             if field not in self.skip_properties
         ]
@@ -121,10 +130,10 @@ class UploadCSV(OrganizationPermissionRequiredMixin, OrganizationView, FormView)
             else:
                 kwargs[field] = values.get(field)
 
-        return ooi_type(**kwargs)
+        return ooi_type(**kwargs), level
 
     def form_valid(self, form):
-        if not self.proccess_csv(form):
+        if not self.process_csv(form):
             return redirect("upload_csv", organization_code=self.organization.code)
         return super().form_valid(form)
 
@@ -136,7 +145,7 @@ class UploadCSV(OrganizationPermissionRequiredMixin, OrganizationView, FormView)
         messages.add_message(self.request, messages.SUCCESS, success_message)
         return True
 
-    def proccess_csv(self, form):
+    def process_csv(self, form):
         object_type = form.cleaned_data["object_type"]
         csv_file = form.cleaned_data["csv_file"]
 
@@ -154,10 +163,12 @@ class UploadCSV(OrganizationPermissionRequiredMixin, OrganizationView, FormView)
                 if not row:
                     continue  # skip empty lines
                 try:
-                    ooi = self.get_ooi_from_csv(object_type, row)
+                    ooi, level = self.get_ooi_from_csv(object_type, row)
                     self.octopoes_api_connector.save_declaration(
-                        Declaration(ooi=ooi, valid_time=datetime.now(timezone.utc), task_id=str(task_id))
+                        Declaration(ooi=ooi, valid_time=datetime.now(timezone.utc), task_id=task_id)
                     )
+                    if isinstance(level, int):
+                        self.raise_clearance_level(ooi.reference, level)
                 except ValidationError:
                     rows_with_error.append(row_number)
 

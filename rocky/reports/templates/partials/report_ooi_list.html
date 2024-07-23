@@ -1,0 +1,110 @@
+{% load i18n %}
+
+<section>
+    <div>
+        <h2>
+            {% blocktranslate trimmed count counter=object_list|length %}
+                Select object ({{ total_oois }})
+            {% plural %}
+                Select objects ({{ total_oois }})
+            {% endblocktranslate %}
+        </h2>
+        <p>{% translate "Select which objects you want to include in your report." %}</p>
+        {% translate "Filter" as filter_title %}
+        {% include "partials/ooi_list_filters.html" with title=filter_title clearance_level_filter_form=clearance_level_filter_form %}
+
+        <p class="de-emphasized">
+            {% if active_filters %}
+                <strong>{% translate "Currently filtered on:" %}</strong>
+                {% for filter, value in active_filters.items %}<strong>{{ filter }}</strong>{{ value|title }}&nbsp;{% endfor %}
+            {% endif %}
+        </p>
+        {% if not object_list %}
+            <p>{% translate "No objects found." %}</p>
+            <div class="button-container">
+                <a class="button"
+                   href="{% url 'ooi_add_type_select' organization_code=organization.code %}">{% translate "Create object" %}</a>
+                <a class="button ghost"
+                   href="{% url 'ooi_list' organization_code=organization.code %}">{% translate "Go to the object page" %}</a>
+            </div>
+        {% else %}
+            {% if "all" in request.GET.ooi %}
+                <div class="horizontal-view horizontal-scroll toolbar start">
+                    <p class="de-emphasized">{{ total_oois }} {% translate "objects selected" %}</p>
+                    <a class="select_all_objects_element">{% translate "Deselect all objects" %}</a>
+                    <p class="de-emphasized end">
+                        {% blocktranslate with length=ooi_list|length total=total_oois %}Showing {{ length }} of {{ total }} objects{% endblocktranslate %}
+                    </p>
+                </div>
+            {% else %}
+                <div class="horizontal-view horizontal-scroll toolbar">
+                    <div>
+                        <a class="select_all_objects_element">
+                            {% blocktranslate trimmed count counter=object_list|length %}
+                                Select all {{ total_oois }} object
+                            {% plural %}
+                                Select all {{ total_oois }} objects
+                            {% endblocktranslate %}
+                        </a>
+                    </div>
+                    <div class="end">
+                        <p class="de-emphasized">
+                            {% blocktranslate with length=ooi_list|length total=total_oois %}Showing {{ length }} of {{ total }} objects{% endblocktranslate %}
+                        </p>
+                    </div>
+                </div>
+            {% endif %}
+            <form method="get"
+                  action="{{ next }}"
+                  class="inline layout-wide checkboxes_required">
+                {% if "all" in selected_oois %}
+                    {% include "forms/report_form_fields.html" %}
+
+                {% else %}
+                    {% include "forms/report_form_fields.html" with selected_oois=None %}
+
+                {% endif %}
+                <table>
+                    <caption class="visually-hidden">{% translate "Objects" %}</caption>
+                    <thead>
+                        <th>
+                            <input class="select_all_objects_element"
+                                   type="checkbox"
+                                   {% if "all" in request.GET.ooi %}checked{% endif %}>
+                        </th>
+                        <th>{% translate "Object" %}</th>
+                        <th>{% translate "Type" %}</th>
+                        <th>{% translate "Clearance level" %}</th>
+                        <th>{% translate "Clearance type" %}</th>
+                    </thead>
+                    <tbody>
+                        {% for object in object_list %}
+                            <tr>
+                                <td>
+                                    <input type="checkbox" id="submit-form" name="ooi" value={{ object.primary_key }} {% if object.primary_key in selected_oois or "all" in request.GET.ooi %}checked{% endif %} {% if "all" in request.GET.ooi %}disabled{% endif %}>
+                                </td>
+                                <td>{{ object.human_readable }}</td>
+                                <td>{{ object.ooi_type }}</td>
+                                <td>
+                                    {% include "partials/scan_level_indicator.html" with value=object.scan_profile.level.value %}
+
+                                </td>
+                                <td>{{ object.scan_profile.scan_profile_type|title }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <button type="submit" class="button">
+                    {% translate "Continue with selection" %}<span class="icon ti-chevron-right"></span>
+                </button>
+            </form>
+            {% include "partials/list_paginator.html" %}
+
+        {% endif %}
+    </div>
+</section>
+<form id="select_all_objects_form" class="inline" method="get">
+    {% include "forms/report_form_fields.html" with selected_oois=None %}
+
+    {% if "all" not in selected_oois %}<input type="hidden" name="ooi" value="all">{% endif %}
+</form>

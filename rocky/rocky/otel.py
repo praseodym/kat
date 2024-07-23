@@ -1,15 +1,14 @@
-import logging
-
+import structlog
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.django import DjangoInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
-from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class OpenTelemetryHelper:
@@ -23,7 +22,7 @@ class OpenTelemetryHelper:
 
         DjangoInstrumentor().instrument()
         Psycopg2Instrumentor().instrument()
-        RequestsInstrumentor().instrument()
+        HTTPXClientInstrumentor().instrument()
 
         resource = Resource(attributes={SERVICE_NAME: "rocky"})
         provider = TracerProvider(resource=resource)

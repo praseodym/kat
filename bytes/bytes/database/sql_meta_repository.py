@@ -1,7 +1,7 @@
-import logging
 import uuid
-from typing import Dict, Iterator, List, Optional, Type
+from collections.abc import Iterator
 
+import structlog
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
@@ -9,15 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from bytes.config import Settings, get_settings
 from bytes.database.db import SQL_BASE, get_engine
 from bytes.database.db_models import BoefjeMetaInDB, NormalizerMetaInDB, RawFileInDB, SigningProviderInDB
-from bytes.models import (
-    Boefje,
-    BoefjeMeta,
-    MimeType,
-    Normalizer,
-    NormalizerMeta,
-    RawData,
-    RawDataMeta,
-)
+from bytes.models import Boefje, BoefjeMeta, MimeType, Normalizer, NormalizerMeta, RawData, RawDataMeta
 from bytes.raw.file_raw_repository import create_raw_repository
 from bytes.repositories.hash_repository import HashRepository
 from bytes.repositories.meta_repository import BoefjeMetaFilter, MetaDataRepository, NormalizerMetaFilter, RawDataFilter
@@ -25,7 +17,7 @@ from bytes.repositories.raw_repository import RawRepository
 from bytes.timestamping.hashing import hash_data
 from bytes.timestamping.provider import create_hash_repository
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class SQLMetaDataRepository(MetaDataRepository):
@@ -40,7 +32,7 @@ class SQLMetaDataRepository(MetaDataRepository):
     def __enter__(self) -> None:
         pass
 
-    def __exit__(self, _exc_type: Type[Exception], _exc_value: str, _exc_traceback: str) -> None:
+    def __exit__(self, _exc_type: type[Exception], _exc_value: str, _exc_traceback: str) -> None:
         try:
             self.session.commit()
             logger.debug("Committed session")
@@ -55,15 +47,15 @@ class SQLMetaDataRepository(MetaDataRepository):
 
         logger.info("Added boefje meta [id=%s]", boefje_meta.id)
 
-    def get_boefje_meta_by_id(self, boefje_meta_id: str) -> BoefjeMeta:
-        boefje_meta_in_db = self.session.get(BoefjeMetaInDB, boefje_meta_id)
+    def get_boefje_meta_by_id(self, boefje_meta_id: uuid.UUID) -> BoefjeMeta:
+        boefje_meta_in_db = self.session.get(BoefjeMetaInDB, str(boefje_meta_id))
 
         if boefje_meta_in_db is None:
-            raise ObjectNotFoundException(BoefjeMetaInDB, id=boefje_meta_id)
+            raise ObjectNotFoundException(BoefjeMetaInDB, id=str(boefje_meta_id))
 
         return to_boefje_meta(boefje_meta_in_db)
 
-    def get_boefje_meta(self, query_filter: BoefjeMetaFilter) -> List[BoefjeMeta]:
+    def get_boefje_meta(self, query_filter: BoefjeMetaFilter) -> list[BoefjeMeta]:
         logger.debug("Querying boefje meta: %s", query_filter.json())
 
         query = self.session.query(BoefjeMetaInDB).filter(BoefjeMetaInDB.organization == query_filter.organization)
@@ -85,23 +77,25 @@ class SQLMetaDataRepository(MetaDataRepository):
 
         logger.info("Added normalizer meta [id=%s]", normalizer_meta.id)
 
-    def get_normalizer_meta_by_id(self, normalizer_meta_id: str) -> NormalizerMeta:
-        normalizer_meta_in_db = self.session.get(NormalizerMetaInDB, normalizer_meta_id)
+    def get_normalizer_meta_by_id(self, normalizer_meta_id: uuid.UUID) -> NormalizerMeta:
+        normalizer_meta_in_db = self.session.get(NormalizerMetaInDB, str(normalizer_meta_id))
 
         if normalizer_meta_in_db is None:
-            raise ObjectNotFoundException(NormalizerMetaInDB, id=normalizer_meta_id)
+            raise ObjectNotFoundException(NormalizerMetaInDB, id=str(normalizer_meta_id))
 
         return to_normalizer_meta(normalizer_meta_in_db)
 
-    def get_normalizer_meta(self, query_filter: NormalizerMetaFilter) -> List[NormalizerMeta]:
+    def get_normalizer_meta(self, query_filter: NormalizerMetaFilter) -> list[NormalizerMeta]:
         logger.debug("Querying normalizer meta: %s", query_filter.json())
 
+        query = self.session.query(NormalizerMetaInDB)
+
         if query_filter.raw_id is not None:
-            query = self.session.query(NormalizerMetaInDB).filter(NormalizerMetaInDB.raw_file_id == query_filter.raw_id)
-        else:
+            query = query.filter(NormalizerMetaInDB.raw_file_id == str(query_filter.raw_id))
+
+        if query_filter.organization is not None:
             query = (
-                self.session.query(NormalizerMetaInDB)
-                .join(RawFileInDB)
+                query.join(RawFileInDB)
                 .join(BoefjeMetaInDB)
                 .filter(RawFileInDB.boefje_meta_id == BoefjeMetaInDB.id)
                 .filter(BoefjeMetaInDB.organization == query_filter.organization)
@@ -117,7 +111,7 @@ class SQLMetaDataRepository(MetaDataRepository):
 
         return [to_normalizer_meta(normalizer_meta) for normalizer_meta in query]
 
-    def save_raw(self, raw: RawData) -> str:
+    def save_raw(self, raw: RawData) -> uuid.UUID:
         # Hash the data
         secure_hash = hash_data(raw, raw.boefje_meta.ended_at, self.app_settings.hashing_algorithm)
 
@@ -137,44 +131,34 @@ class SQLMetaDataRepository(MetaDataRepository):
         self.raw_repository.save_raw(raw_file_in_db.id, raw)
         logger.info("Added raw data [id=%s]", raw_file_in_db.id)
 
-        return str(raw_file_in_db.id)
+        return raw_file_in_db.id
 
-    def get_raw(self, query_filter: RawDataFilter) -> List[RawDataMeta]:
+    def get_raw(self, query_filter: RawDataFilter) -> list[RawDataMeta]:
         logger.debug("Querying raw data: %s", query_filter.json())
-
-        if query_filter.boefje_meta_id:
-            query = self.session.query(RawFileInDB).filter(RawFileInDB.boefje_meta_id == query_filter.boefje_meta_id)
-        else:
-            query = (
-                self.session.query(RawFileInDB)
-                .join(BoefjeMetaInDB)
-                .filter(BoefjeMetaInDB.organization == query_filter.organization)
-            )
-
-        if query_filter.normalized:
-            query = query.join(NormalizerMetaInDB, isouter=False)
-
-        if query_filter.normalized is False:  # it can also be None, in which case we do not want a filter
-            query = query.join(NormalizerMetaInDB, isouter=True).filter(NormalizerMetaInDB.id.is_(None))
-
-        if query_filter.mime_types:
-            query = query.filter(RawFileInDB.mime_types.contains([m.value for m in query_filter.mime_types]))
-
-        query = query.offset(query_filter.offset).limit(query_filter.limit)
+        query = self.session.query(RawFileInDB)
+        query = query_filter.apply(query)
 
         return [to_raw_meta(raw_file_in_db) for raw_file_in_db in query]
 
-    def get_raw_by_id(self, raw_id: str) -> RawData:
-        raw_in_db: Optional[RawFileInDB] = self.session.get(RawFileInDB, raw_id)
+    def get_raw_by_id(self, raw_id: uuid.UUID) -> RawData:
+        raw_in_db: RawFileInDB | None = self.session.get(RawFileInDB, str(raw_id))
 
         if raw_in_db is None:
-            raise ObjectNotFoundException(RawFileInDB, id=raw_id)
+            raise ObjectNotFoundException(RawFileInDB, id=str(raw_id))
 
         boefje_meta = to_boefje_meta(raw_in_db.boefje_meta)
         return self.raw_repository.get_raw(raw_in_db.id, boefje_meta)
 
-    def has_raw(self, boefje_meta: BoefjeMeta, mime_types: List[MimeType]) -> bool:
-        query = self.session.query(RawFileInDB).filter(RawFileInDB.boefje_meta_id == boefje_meta.id)
+    def get_raw_meta_by_id(self, raw_id: uuid.UUID) -> RawDataMeta:
+        raw_in_db: RawFileInDB | None = self.session.get(RawFileInDB, str(raw_id))
+
+        if raw_in_db is None:
+            raise ObjectNotFoundException(RawFileInDB, id=str(raw_id))
+
+        return to_raw_meta(raw_in_db)
+
+    def has_raw(self, boefje_meta: BoefjeMeta, mime_types: list[MimeType]) -> bool:
+        query = self.session.query(RawFileInDB).filter(RawFileInDB.boefje_meta_id == str(boefje_meta.id))
 
         if len(mime_types) > 0:
             query = query.filter(RawFileInDB.mime_types.contains([mime_type.value for mime_type in mime_types]))
@@ -183,7 +167,7 @@ class SQLMetaDataRepository(MetaDataRepository):
 
         return count > 0
 
-    def get_raw_file_count_per_organization(self) -> Dict[str, int]:
+    def get_raw_file_count_per_organization(self) -> dict[str, int]:
         query = (
             self.session.query(BoefjeMetaInDB.organization, func.count())
             .join(RawFileInDB)
@@ -192,13 +176,22 @@ class SQLMetaDataRepository(MetaDataRepository):
 
         return {organization_id: count for organization_id, count in query}
 
+    def get_raw_file_count_per_mime_type(self, query_filter: RawDataFilter) -> dict[str, int]:
+        logger.debug("Querying count raw data per mime type: %s", query_filter.json())
+        query = self.session.query(func.unnest(RawFileInDB.mime_types), func.count()).group_by(
+            func.unnest(RawFileInDB.mime_types)
+        )
+        query = query_filter.apply(query)
+
+        return {mime_type: count for mime_type, count in query}
+
     def _to_raw(self, raw_file_in_db: RawFileInDB) -> RawData:
         boefje_meta = to_boefje_meta(raw_file_in_db.boefje_meta)
         data = self.raw_repository.get_raw(raw_file_in_db.id, boefje_meta)
 
         return to_raw_data(raw_file_in_db, data.value)
 
-    def _get_or_create_signing_provider(self, signing_provider_url: Optional[str]) -> Optional[SigningProviderInDB]:
+    def _get_or_create_signing_provider(self, signing_provider_url: str | None) -> SigningProviderInDB | None:
         if not signing_provider_url:
             return None
 
@@ -215,7 +208,9 @@ class SQLMetaDataRepository(MetaDataRepository):
 def create_meta_data_repository() -> Iterator[MetaDataRepository]:
     settings = get_settings()
 
-    session = sessionmaker(bind=get_engine(settings.bytes_db_uri))()
+    session = sessionmaker(
+        bind=get_engine(db_uri=str(settings.db_uri), pool_size=int(settings.db_connection_pool_size))
+    )()
     repository = SQLMetaDataRepository(
         session, create_raw_repository(settings), create_hash_repository(settings), settings
     )
@@ -234,7 +229,7 @@ def create_meta_data_repository() -> Iterator[MetaDataRepository]:
 
 
 class ObjectNotFoundException(Exception):
-    def __init__(self, cls: Type[SQL_BASE], **kwargs):  # type: ignore
+    def __init__(self, cls: type[SQL_BASE], **kwargs):
         super().__init__(f"The object of type {cls} was not found for query parameters {kwargs}")
 
 
@@ -244,7 +239,7 @@ class MetaIntegrityError(Exception):
 
 def to_boefje_meta_in_db(boefje_meta: BoefjeMeta) -> BoefjeMetaInDB:
     return BoefjeMetaInDB(
-        id=boefje_meta.id,
+        id=str(boefje_meta.id),
         boefje_id=boefje_meta.boefje.id,
         boefje_version=boefje_meta.boefje.version,
         arguments=boefje_meta.arguments,
@@ -273,12 +268,12 @@ def to_boefje_meta(boefje_meta_in_db: BoefjeMetaInDB) -> BoefjeMeta:
 
 def to_normalizer_meta_in_db(normalizer_meta: NormalizerMeta) -> NormalizerMetaInDB:
     return NormalizerMetaInDB(
-        id=normalizer_meta.id,
+        id=str(normalizer_meta.id),
         normalizer_id=normalizer_meta.normalizer.id,
         normalizer_version=normalizer_meta.normalizer.version,
         started_at=normalizer_meta.started_at,
         ended_at=normalizer_meta.ended_at,
-        raw_file_id=normalizer_meta.raw_data.id,
+        raw_file_id=str(normalizer_meta.raw_data.id),
     )
 
 
@@ -297,10 +292,10 @@ def to_normalizer_meta(normalizer_meta_in_db: NormalizerMetaInDB) -> NormalizerM
     )
 
 
-def to_raw_file_in_db(raw_data: RawData, signing_provider: Optional[SigningProviderInDB]) -> RawFileInDB:
+def to_raw_file_in_db(raw_data: RawData, signing_provider: SigningProviderInDB | None) -> RawFileInDB:
     return RawFileInDB(
         id=str(uuid.uuid4()),
-        boefje_meta_id=raw_data.boefje_meta.id,
+        boefje_meta_id=str(raw_data.boefje_meta.id),
         secure_hash=raw_data.secure_hash,
         signing_provider=signing_provider if signing_provider else None,
         hash_retrieval_link=raw_data.hash_retrieval_link,
@@ -308,9 +303,9 @@ def to_raw_file_in_db(raw_data: RawData, signing_provider: Optional[SigningProvi
     )
 
 
-def raw_meta_to_raw_file_in_db(raw_data_meta: RawDataMeta, signing_provider_id: Optional[int]) -> RawFileInDB:
+def raw_meta_to_raw_file_in_db(raw_data_meta: RawDataMeta, signing_provider_id: int | None) -> RawFileInDB:
     return RawFileInDB(
-        id=raw_data_meta.id,
+        id=str(raw_data_meta.id),
         boefje_meta_id=raw_data_meta.boefje_meta.id,
         secure_hash=raw_data_meta.secure_hash,
         signing_provider_id=signing_provider_id if signing_provider_id else None,

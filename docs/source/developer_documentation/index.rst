@@ -10,6 +10,12 @@ Contains documentation for developers and contributors.
    rocky
    mula
    boefjes
+   boefjes-runner
+   normalisers-runner
    bytes
    octopoes
+   octopoes_models
+   octopoes_research
    keiko
+   reports
+   development_tutorial/index

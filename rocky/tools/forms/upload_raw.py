@@ -1,13 +1,6 @@
-from typing import Set
-
 from django import forms
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext as _
-
-RAW_ERRORS = {
-    "no_org": _("Organization code(s) for raw does not exist in our database"),
-    "decoding": _("File could not be decoded"),
-}
 
 
 class UploadRawForm(forms.Form):
@@ -29,7 +22,7 @@ class UploadRawForm(forms.Form):
         allow_empty_file=False,
     )
 
-    def clean_mime_types(self) -> Set[str]:
+    def clean_mime_types(self) -> set[str]:
         mime_types = self.cleaned_data["mime_types"]
 
-        return set([mime_type.strip() for mime_type in mime_types.split(",") if mime_type.strip()])
+        return {mime_type.strip() for mime_type in mime_types.split(",") if mime_type.strip()}

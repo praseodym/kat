@@ -1,5 +1,5 @@
 {
-  "id": "dns-lookup-job",
+  "id": "99c3df04-8960-4059-94ea-2a8db1ca8b1c",
   "boefje": {
     "id": "dns-records",
     "version": null
@@ -7,7 +7,9 @@
   "organization": "_dev",
   "input_ooi": "Hostname|internet|www.example.nl",
   "arguments": {
-    "input": {"name": "www.example.nl"}
+    "input": {
+      "name": "www.example.nl"
+    }
   },
   "dispatches": [
     {

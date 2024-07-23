@@ -1,5 +1,6 @@
 import re
-from typing import Dict, Iterator, List
+from collections.abc import Iterator
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from pydantic import ValidationError
@@ -15,7 +16,7 @@ def is_url(input_str):
     return bool(result.scheme)
 
 
-def run(input_ooi: HTTPHeader, additional_oois: List, config: Dict[str, str]) -> Iterator[OOI]:
+def run(input_ooi: HTTPHeader, additional_oois: list, config: dict[str, Any]) -> Iterator[OOI]:
     network = Network(name="internet")
 
     if input_ooi.key.lower() == "location":
@@ -25,7 +26,7 @@ def run(input_ooi: HTTPHeader, additional_oois: List, config: Dict[str, str]) ->
             # url is not a url but a relative path
             http_url = input_ooi.reference.tokenized.resource.web_url
             # allow for ipaddress http urls
-            netloc = http_url.netloc.name if "name" in http_url.netloc.__root__ else http_url.netloc.address
+            netloc = http_url.netloc.name if "name" in http_url.netloc.root else http_url.netloc.address
             original_url = f"{http_url.scheme}://{netloc}{http_url.path}"
             u = URL(raw=urljoin(original_url, input_ooi.value), network=network.reference)
         yield u

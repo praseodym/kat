@@ -1,17 +1,23 @@
-import logging
 import socket
 import time
-from typing import Callable
+from collections.abc import Callable
 
-import requests
+import httpx
+import structlog
 
 
 class Connector:
+    """A class that provides methods to check if a host is available and healthy."""
+
     def __init__(self):
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = structlog.getLogger(self.__class__.__name__)
 
     def is_host_available(self, hostname: str, port: int) -> bool:
         """Check if the host is available.
+
+        Args:
+            hostname: A string representing the hostname.
+            port: An integer representing the port number.
 
         Returns:
             A boolean
@@ -25,14 +31,19 @@ class Connector:
     def is_host_healthy(self, host: str, health_endpoint: str) -> bool:
         """Check if host is healthy by inspecting the host's health endpoint.
 
+        Args:
+            host: A string representing the hostname.
+            health_endpoint: A string representing the health endpoint.
+
         Returns:
             A boolean
         """
         try:
-            response = requests.get(f"{host}{health_endpoint}", timeout=5)
+            url = f"{host}/{health_endpoint}"
+            response = httpx.get(url, timeout=5)
             healthy = response.json().get("healthy")
             return healthy
-        except requests.exceptions.RequestException as exc:
+        except httpx.HTTPError as exc:
             self.logger.warning("Exception: %s", exc)
             return False
 
@@ -48,22 +59,22 @@ class Connector:
         for i in range(10):
             if func(*args, **kwargs):
                 self.logger.info(
-                    "Function %s, executed successfully. Retry count: %d [name=%s, args=%s, kwargs=%s]",
+                    "Function %s, executed successfully. Retry count: %d",
                     func.__name__,
                     i,
-                    func.__name__,
-                    args,
-                    kwargs,
+                    name=func.__name__,
+                    args=args,
+                    kwargs=kwargs,
                 )
                 return True
 
             self.logger.warning(
-                "Function %s, failed. Retry count: %d [name=%s, args=%s, kwargs=%s]",
+                "Function %s, failed. Retry count: %d",
                 func.__name__,
                 i,
-                func.__name__,
-                args,
-                kwargs,
+                name=func.__name__,
+                args=args,
+                kwargs=kwargs,
             )
 
             time.sleep(10)

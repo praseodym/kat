@@ -1,17 +1,13 @@
-import logging
-
 from account.mixins import OrganizationPermissionRequiredMixin
 from django.contrib import messages
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import FormView
-from requests import RequestException
+from httpx import HTTPError
 
 from katalogus.forms import PluginSchemaForm
 from katalogus.views.mixins import SinglePluginView
-
-logger = logging.getLogger(__name__)
 
 
 class PluginSettingsAddView(OrganizationPermissionRequiredMixin, SinglePluginView, FormView):
@@ -22,6 +18,10 @@ class PluginSettingsAddView(OrganizationPermissionRequiredMixin, SinglePluginVie
 
     def get_form(self, **kwargs):
         settings = self.katalogus_client.get_plugin_settings(self.plugin.id)
+
+        # This helps mypy understand that self.plugin_schema can't be None
+        # because of the check in dispatch()
+        assert self.plugin_schema is not None
 
         return PluginSchemaForm(self.plugin_schema, settings, **self.get_form_kwargs())
 
@@ -47,19 +47,19 @@ class PluginSettingsAddView(OrganizationPermissionRequiredMixin, SinglePluginVie
 
         try:
             self.katalogus_client.upsert_plugin_settings(self.plugin.id, form.cleaned_data)
-            messages.add_message(self.request, messages.SUCCESS, _("Added settings for '{}'").format(self.plugin.id))
-        except RequestException:
+            messages.add_message(self.request, messages.SUCCESS, _("Added settings for '{}'").format(self.plugin.name))
+        except HTTPError:
             messages.add_message(self.request, messages.ERROR, _("Failed adding settings"))
             return redirect(self.get_success_url())
 
         if "add-enable" in self.request.POST:
             try:
                 self.katalogus_client.enable_boefje(self.plugin)
-            except RequestException:
-                messages.add_message(self.request, messages.ERROR, _("Enabling {} failed").format(self.plugin.id))
+            except HTTPError:
+                messages.add_message(self.request, messages.ERROR, _("Enabling {} failed").format(self.plugin.name))
                 return redirect(self.get_success_url())
 
-            messages.add_message(self.request, messages.SUCCESS, _("Boefje '{}' enabled.").format(self.plugin.id))
+            messages.add_message(self.request, messages.SUCCESS, _("Boefje '{}' enabled.").format(self.plugin.name))
 
         return redirect(self.get_success_url())
 
@@ -72,10 +72,9 @@ class PluginSettingsAddView(OrganizationPermissionRequiredMixin, SinglePluginVie
             },
             {
                 "url": reverse(
-                    "plugin_detail",
+                    "boefje_detail",
                     kwargs={
                         "organization_code": self.organization.code,
-                        "plugin_type": self.plugin.type,
                         "plugin_id": self.plugin.id,
                     },
                 ),
@@ -100,10 +99,9 @@ class PluginSettingsAddView(OrganizationPermissionRequiredMixin, SinglePluginVie
 
     def get_success_url(self):
         return reverse(
-            "plugin_detail",
+            "boefje_detail",
             kwargs={
                 "organization_code": self.organization.code,
-                "plugin_type": self.plugin.type,
                 "plugin_id": self.plugin.id,
             },
         )

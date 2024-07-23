@@ -4,10 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from boefjes.app import SchedulerWorkerManager
+from boefjes.app import SchedulerWorkerManager, get_runtime_manager
+from boefjes.config import Settings
 from boefjes.runtime_interfaces import WorkerManager
 from tests.conftest import MockHandler, MockSchedulerClient
-from tests.stubs import get_dummy_data
+from tests.loading import get_dummy_data
 
 
 def test_one_process(manager: SchedulerWorkerManager, item_handler: MockHandler) -> None:
@@ -151,3 +152,8 @@ def test_null(manager: SchedulerWorkerManager, tmp_path: Path, item_handler: Moc
     assert len(patched_tasks) == 3
     assert patched_tasks[0] == ("70da7d4f-f41f-4940-901b-d98a92e9014b", "completed")
     assert patched_tasks[2] == ("70da7d4f-f41f-4940-901b-d98a92e9014b", "completed")
+
+
+def test_create_manager():
+    get_runtime_manager(Settings(), WorkerManager.Queue.BOEFJES, "INFO")
+    get_runtime_manager(Settings(), WorkerManager.Queue.NORMALIZERS, "INFO")
